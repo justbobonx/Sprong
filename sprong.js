@@ -14,6 +14,7 @@
   const POINT_PAUSE_MS = 900;
   const HIT_LOCK_MS = 90;
   const NEON = "#39ff14";
+  const BALL = "#eeee33";
   const BG0 = "#020805";
   const BG1 = "#04140a";
   const PCOL = ["#2f9bff", "#ff3b3b"];
@@ -447,24 +448,10 @@
     const b = state.ball;
     const s = b.size;
     ctx.save();
-    ctx.fillStyle = NEON;
-    ctx.shadowColor = NEON;
+    ctx.fillStyle = BALL;
+    ctx.shadowColor = BALL;
     ctx.shadowBlur = 20 + (s - BALL_BASE) * 0.4;
     ctx.fillRect(b.x - s * 0.5, b.y - s * 0.5, s, s);
-    ctx.restore();
-  }
-
-  function drawHint() {
-    if (state.mode === "play" || state.mode === "pause") return;
-    const w = state.w, h = state.h;
-    ctx.save();
-    ctx.fillStyle = "rgba(57,255,20,0.35)";
-    ctx.font = "600 " + Math.max(12, Math.min(w, h) * 0.028) + "px ui-sans-serif, system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    const msg = state.mode === "toss" ? "TAP TO SERVE" : "SERVER TAP TO TOSS";
-    if (state.landscape) ctx.fillText(msg, w * 0.5, h * 0.88);
-    else ctx.fillText(msg, w * 0.5, h * 0.96);
     ctx.restore();
   }
 
@@ -476,7 +463,6 @@
     drawChevron();
     drawWaves();
     drawBall();
-    drawHint();
   }
 
   function frame(now) {
