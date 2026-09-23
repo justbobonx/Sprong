@@ -24,8 +24,9 @@ const BG_COL = "#020805";
 const PCOL = ["#2f9bff", "#ff3b3b"];
 const PCOL_RGB = ["47,155,255", "255,59,59"];
 
-const RESET_HOLD_MS = 3000;
+const RESET_HOLD_MS = 2000;
 let resetHoldTimer = 0;
+let resetHoldStart = 0;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -40,7 +41,7 @@ var state = {
   viewH: 0,
   dpr: 1,
   portrait: false,
-  mode: "serve",
+  mode: "title",
   server: 0,
   scores: [{p:0,g:0,s:0}, {p:0,g:0,s:0}],
   showGames: 0,
@@ -73,6 +74,26 @@ function loadState() {
   }
 }
 
+function requestPageFullscreen() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+    if (!req) return Promise.resolve();
+    try {
+      const p = req.call(el);
+      if (p && typeof p.then === "function") return p.catch(function () {});
+    } catch (err) {}
+    return Promise.resolve();
+  }
+  
+function startGame() {
+  if (state.mode !== "title") return;
+  loadState();
+  const startServer = state.scoredBy >=0 ? state.scoredBy : Math.round(Math.random());
+  newPoint(startServer);
+  
+  requestPageFullscreen();  
+}
+
 function resize() {
   const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
   const viewW = window.innerWidth;
@@ -90,9 +111,8 @@ function resize() {
   state.h = Math.min(viewW, viewH);
   state.targetW = state.w * 0.5 * TARGET_W_PERC;
   if (state.mode === "serve") parkBall();
-  else if (wasPortrait !== state.portrait) resetPoint(state.server);
+  else if (wasPortrait !== state.portrait) newPoint(state.server);
 }
-
 
 function screenToWorld(sx, sy) {
   if (!state.portrait) return { x: sx, y: sy };
@@ -121,7 +141,7 @@ function parkBall() {
   b.y = -9999;
 }
 
-function resetPoint(server) {
+function newPoint(server) {
   state.server = server;
   state.mode = "serve";
   state.tossT = 0;
@@ -198,8 +218,7 @@ function applyHit(tapX, tapY, fromSide, serveBoost) {
   state.hitLock = HIT_LOCK_MS;
 }
 
-function scoreAgainst(side) {
-  const winner = side === 0 ? 1 : 0;
+function scoreFor(winner) {  
   const winscore = state.scores[winner];
   //game
   winscore.p+=1;
@@ -243,25 +262,33 @@ function onTap(x, y) {
 }
 
 function resetDown() {
+  if( state.mode!=="serve" ) return;
+  
   clearTimeout(resetHoldTimer);
   resetHoldTimer = setTimeout(() => {
-    resetHoldTimer = 0;
-    
+    resetHoldStart = 0;
+    messageText = "";
     state.scores = [{p:0,g:0,s:0}, {p:0,g:0,s:0}]; 
-    resetPoint(Math.round(Math.random()));    
-    saveState();
-    
-  }, RESET_HOLD_MS);
+    newPoint(Math.round(Math.random()));    
+    saveState();    
+  }, RESET_HOLD_MS);  
+  resetHoldStart = state.now;
 }
 
 function resetUp() {
   clearTimeout(resetHoldTimer);
+  messageText = "";
   resetHoldTimer = 0;
+  resetHoldStart = 0;
 }
 
 function bindInput() {
   canvas.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
+    if (state.mode === "title") {
+      startGame();
+      return;
+    }
     const r = canvas.getBoundingClientRect();
     const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
     if( !inTargetZone(0,p.x) && !inTargetZone(1,p.x) ){
@@ -318,14 +345,15 @@ function updateBall(dt) {
   b.x += b.vx * dt;
   b.y += b.vy * dt;
   const missSide = state.lastHitter < 0 ? state.server : state.lastHitter;
-  if (b.x + half < 0) scoreAgainst(0);
-  else if (b.x - half > w) scoreAgainst(1);
-  else if (b.y + half < 0 || b.y - half > h) scoreAgainst(missSide);
+  if (b.x + half < 0) scoreFor(1);
+  else if (b.x - half > w) scoreFor(0);
+  else if (b.y + half < 0 || b.y - half > h) scoreFor((missSide+1)%2);
   
   state.ball.z = Math.max( 0, state.ball.z-.1 );
 }
 
 function update(dt) {
+  if (state.mode === "title") return;
   const ms = dt * 1000;
   if (state.hitLock > 0) state.hitLock -= ms;
   if (state.mode === "toss") {
@@ -342,7 +370,7 @@ function update(dt) {
     updateBall(dt);
   } else if (state.mode === "pause") {
     state.pauseT += ms;
-    if (state.pauseT >= POINT_PAUSE_MS) resetPoint(state.scoredBy);
+    if (state.pauseT >= POINT_PAUSE_MS) newPoint(state.scoredBy);
   }
   updateWaves(dt);
 }
@@ -357,6 +385,17 @@ function beginDraw() {
   
   ctx.fillStyle = BG_COL;
   ctx.fillRect(0, 0, state.w, state.h);
+}
+
+function drawTitle() {
+  const font = Math.min(state.w * 0.2, state.h * 0.6);
+  ctx.save();
+  ctx.fillStyle = NEON;
+  ctx.font = "900 " + font + "px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("SPRONG", state.w * 0.5, state.h * 0.5);
+  ctx.restore();
 }
 
 function drawTargetZones() {
@@ -457,8 +496,8 @@ function drawScores() {
   for (let i = 0; i < 2; i++) {
     const won = scores[i].g;
     const areaLeft = i === 0 ? gamesX: w - gamesW-gamesX;
-    ctx.strokeStyle = PCOL[i];
-    ctx.fillStyle = "rgba(" + PCOL_RGB[i] + ",0.55)";
+    ctx.strokeStyle = "rgba(" + PCOL_RGB[i] + ",0.35)";
+    ctx.fillStyle = "rgba(" + PCOL_RGB[i] + ",0.65)";
     for (let g = 0; g < GAMES_PER_SET; g++) {
       const x = areaLeft + g * slotW + pad;
       const y = gamesY - boxH / 2;
@@ -508,14 +547,40 @@ function drawMessage() {
   ctx.restore();
 }
 
+const RESET_HOLD_DELAY = 300;
 function draw() {
   beginDraw();
+  if (state.mode === "title") {
+    drawTitle();
+    return;
+  }
   drawTargetZones();
   drawNet();
   drawScores();
   drawChevron();
   drawWaves();
   drawBall();
+  
+  if( resetHoldStart>0 ){    
+    const elapse = state.now-resetHoldStart;    
+    
+    if( elapse < RESET_HOLD_DELAY ){  return; }
+    
+    messageText = "RESET GAME?";    
+    const t = (elapse-RESET_HOLD_DELAY) / (RESET_HOLD_MS-RESET_HOLD_DELAY);
+    
+    ctx.save();
+    ctx.strokeStyle = NEON;
+    ctx.lineWidth = 10;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    ctx.arc(state.w * 0.5, state.h * 0.5, 20,
+      -Math.PI/2,
+      -Math.PI/2 + t * Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  
   drawMessage();
 }
 
@@ -527,7 +592,8 @@ function frame(now) {
   if (!state.last) state.last = now;
   const elapsed = now - state.last;
   if (elapsed < FRAME_MS) return;
-
+  
+  state.now = now;
   state.last = now - (elapsed % FRAME_MS);
   let dt = elapsed / 1000;
   if (dt > 0.05) dt = 0.05;
@@ -539,12 +605,7 @@ function frame(now) {
 window.addEventListener("resize", resize);
 window.addEventListener("orientationchange", () => setTimeout(resize, 80));
 resize();
-resetPoint(0);
 bindInput();
-
-loadState();
-const startServer = state.scoredBy >=0 ? state.scoredBy : Math.round(Math.random());
-resetPoint(startServer);
 
 requestAnimationFrame(frame);
 
