@@ -11,13 +11,13 @@
   const HIT_PUSH = 280;
   const BALL_MAX_SPEED = 1400;
   const BALL_MIN_ACROSS = 260;
-  const WALL_RESTITUTION = 0.98;
   const POINT_PAUSE_MS = 900;
   const HIT_LOCK_MS = 90;
   const NEON = "#39ff14";
-  const NEON_DIM = "rgba(57,255,20,0.22)";
   const BG0 = "#020805";
   const BG1 = "#04140a";
+  const PCOL = ["#2f9bff", "#ff3b3b"];
+  const PCOL_RGB = ["47,155,255", "255,59,59"];
 
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
@@ -27,8 +27,8 @@
     h: 0,
     dpr: 1,
     landscape: true,
-    mode: "serve", // serve | toss | play | pause
-    server: 0,     // 0 = left/top, 1 = right/bottom
+    mode: "serve",
+    server: 0,
     scores: [0, 0],
     ball: { x: 0, y: 0, vx: 0, vy: 0, size: BALL_BASE },
     tossT: 0,
@@ -36,6 +36,7 @@
     hitLock: 0,
     pauseT: 0,
     scoredBy: -1,
+    lastHitter: -1,
     last: 0,
   };
 
@@ -66,6 +67,16 @@
     return fromSide === 0 ? { x: 0, y: 1 } : { x: 0, y: -1 };
   }
 
+  function inTargetZone(side, x, y) {
+    const w = state.w, h = state.h;
+    if (state.landscape) {
+      const depth = w * 0.5 / 3;
+      return side === 0 ? x <= depth : x >= w - depth;
+    }
+    const depth = h * 0.5 / 3;
+    return side === 0 ? y <= depth : y >= h - depth;
+  }
+
   function parkBall() {
     const b = state.ball;
     b.vx = 0;
@@ -83,6 +94,7 @@
     state.hitLock = 0;
     state.pauseT = 0;
     state.scoredBy = -1;
+    state.lastHitter = -1;
     parkBall();
   }
 
@@ -99,31 +111,6 @@
   function tossHeight() {
     const t = Math.max(0, Math.min(1, state.tossT / TOSS_MS));
     return 4 * t * (1 - t);
-  }
-
-  function applyServe(tapX, tapY) {
-    const b = state.ball;
-    const peak = tossHeight();
-    const speed = SERVE_MIN + (SERVE_MAX - SERVE_MIN) * peak;
-    const toward = courtAxisToward(state.server);
-    let dx = b.x - tapX;
-    let dy = b.y - tapY;
-    let dist = Math.hypot(dx, dy);
-    if (dist < 1) {
-      dx = toward.x;
-      dy = toward.y;
-      dist = 1;
-    }
-    const tdx = dx / dist;
-    const tdy = dy / dist;
-    const reach = Math.max(0, 1 - dist / MAX_RADIUS);
-    b.vx = toward.x * speed + tdx * speed * (0.35 + 0.4 * reach);
-    b.vy = toward.y * speed + tdy * speed * (0.35 + 0.4 * reach);
-    forceAcross(state.server);
-    capSpeed();
-    b.size = BALL_BASE;
-    state.mode = "play";
-    state.hitLock = HIT_LOCK_MS;
   }
 
   function forceAcross(fromSide) {
@@ -147,7 +134,7 @@
     }
   }
 
-  function applyHit(tapX, tapY, fromSide) {
+  function applyHit(tapX, tapY, fromSide, serveBoost) {
     const b = state.ball;
     let dx = b.x - tapX;
     let dy = b.y - tapY;
@@ -172,13 +159,22 @@
     const toward = courtAxisToward(fromSide);
     b.vx += toward.x * push;
     b.vy += toward.y * push;
+    if (serveBoost > 0) {
+      const speed = SERVE_MIN + (SERVE_MAX - SERVE_MIN) * serveBoost;
+      const s = Math.hypot(b.vx, b.vy);
+      const k = speed / Math.max(s, 1);
+      b.vx *= Math.max(1, k);
+      b.vy *= Math.max(1, k);
+    }
     forceAcross(fromSide);
     capSpeed();
+    b.size = BALL_BASE;
+    state.lastHitter = fromSide;
     state.hitLock = HIT_LOCK_MS;
   }
 
-  function scoreOut(againstSide) {
-    const winner = againstSide === 0 ? 1 : 0;
+  function scoreAgainst(side) {
+    const winner = side === 0 ? 1 : 0;
     state.scores[winner] += 1;
     state.mode = "pause";
     state.pauseT = 0;
@@ -188,31 +184,21 @@
   }
 
   function spawnWave(x, y, side) {
-    state.waves.push({
-      x, y, side,
-      r: 0,
-      prev: 0,
-      hit: false,
-      born: true,
-    });
+    state.waves.push({ x, y, side, r: 0, prev: 0, hit: false, born: true });
   }
 
   function onTap(x, y) {
     if (x < 0 || y < 0 || x > state.w || y > state.h) return;
     const side = sideOf(x, y);
-
     if (state.mode === "pause") return;
-
     if (state.mode === "serve") {
       if (side === state.server) startToss(x, y);
       return;
     }
-
     if (state.mode === "toss") {
-      if (side === state.server) applyServe(x, y);
+      if (side === state.server) spawnWave(x, y, side);
       return;
     }
-
     if (state.mode === "play") spawnWave(x, y, side);
   }
 
@@ -221,13 +207,11 @@
       const r = canvas.getBoundingClientRect();
       return { x: ev.clientX - r.left, y: ev.clientY - r.top };
     };
-
     canvas.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
       const p = pos(ev);
       onTap(p.x, p.y);
     }, { passive: false });
-
     canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
     window.addEventListener("keydown", (ev) => {
       if (ev.code === "Space") {
@@ -237,20 +221,28 @@
     });
   }
 
-  function updateWaves(dt) {
+  function waveTouchesBall(w) {
     const b = state.ball;
+    const dist = Math.hypot(b.x - w.x, b.y - w.y);
+    const pad = b.size * 0.5;
+    return w.prev <= dist + pad && w.r >= dist - pad && dist <= MAX_RADIUS + pad;
+  }
+
+  function updateWaves(dt) {
     const lock = state.hitLock > 0;
     for (let i = state.waves.length - 1; i >= 0; i--) {
       const w = state.waves[i];
       w.prev = w.r;
       if (w.born) w.born = false;
       else w.r += WAVE_SPEED * dt;
-      if (!w.hit && !lock && state.mode === "play") {
-        const dist = Math.hypot(b.x - w.x, b.y - w.y);
-        const pad = b.size * 0.5;
-        if (w.prev <= dist + pad && w.r >= dist - pad && dist <= MAX_RADIUS + pad) {
+      if (!w.hit && !lock) {
+        if (state.mode === "toss" && w.side === state.server && waveTouchesBall(w)) {
           w.hit = true;
-          applyHit(w.x, w.y, w.side);
+          applyHit(w.x, w.y, w.side, tossHeight());
+          state.mode = "play";
+        } else if (state.mode === "play" && waveTouchesBall(w)) {
+          w.hit = true;
+          applyHit(w.x, w.y, w.side, 0);
         }
       }
       if (w.r >= MAX_RADIUS) state.waves.splice(i, 1);
@@ -261,27 +253,23 @@
     const b = state.ball;
     const w = state.w, h = state.h;
     const half = b.size * 0.5;
-
     b.x += b.vx * dt;
     b.y += b.vy * dt;
-
+    const missSide = state.lastHitter < 0 ? state.server : state.lastHitter;
     if (state.landscape) {
-      if (b.y - half < 0) { b.y = half; b.vy = Math.abs(b.vy) * WALL_RESTITUTION; }
-      else if (b.y + half > h) { b.y = h - half; b.vy = -Math.abs(b.vy) * WALL_RESTITUTION; }
-      if (b.x + half < 0) scoreOut(0);
-      else if (b.x - half > w) scoreOut(1);
+      if (b.x + half < 0) scoreAgainst(0);
+      else if (b.x - half > w) scoreAgainst(1);
+      else if (b.y + half < 0 || b.y - half > h) scoreAgainst(missSide);
     } else {
-      if (b.x - half < 0) { b.x = half; b.vx = Math.abs(b.vx) * WALL_RESTITUTION; }
-      else if (b.x + half > w) { b.x = w - half; b.vx = -Math.abs(b.vx) * WALL_RESTITUTION; }
-      if (b.y + half < 0) scoreOut(0);
-      else if (b.y - half > h) scoreOut(1);
+      if (b.y + half < 0) scoreAgainst(0);
+      else if (b.y - half > h) scoreAgainst(1);
+      else if (b.x + half < 0 || b.x - half > w) scoreAgainst(missSide);
     }
   }
 
   function update(dt) {
     const ms = dt * 1000;
     if (state.hitLock > 0) state.hitLock -= ms;
-
     if (state.mode === "toss") {
       state.tossT += ms;
       const hgt = tossHeight();
@@ -289,6 +277,7 @@
       if (state.tossT >= TOSS_MS) {
         state.mode = "serve";
         state.tossT = 0;
+        state.waves.length = 0;
         parkBall();
       }
     } else if (state.mode === "play") {
@@ -297,7 +286,6 @@
       state.pauseT += ms;
       if (state.pauseT >= POINT_PAUSE_MS) resetPoint(state.scoredBy);
     }
-
     updateWaves(dt);
   }
 
@@ -308,6 +296,52 @@
     g.addColorStop(1, BG0);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
+  }
+
+  function drawTargetZones() {
+    const w = state.w, h = state.h;
+    const live = state.mode === "play" || state.mode === "toss";
+    const g0 = live && inTargetZone(0, state.ball.x, state.ball.y);
+    const g1 = live && inTargetZone(1, state.ball.x, state.ball.y);
+    ctx.save();
+    if (state.landscape) {
+      const depth = w * 0.5 / 3;
+      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + "," + (g0 ? "0.20" : "0.10") + ")";
+      ctx.fillRect(0, 0, depth, h);
+      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + "," + (g1 ? "0.20" : "0.10") + ")";
+      ctx.fillRect(w - depth, 0, depth, h);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.strokeStyle = "rgba(" + PCOL_RGB[0] + ",0.45)";
+      ctx.beginPath();
+      ctx.moveTo(depth, 0);
+      ctx.lineTo(depth, h);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(" + PCOL_RGB[1] + ",0.45)";
+      ctx.beginPath();
+      ctx.moveTo(w - depth, 0);
+      ctx.lineTo(w - depth, h);
+      ctx.stroke();
+    } else {
+      const depth = h * 0.5 / 3;
+      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + "," + (g0 ? "0.20" : "0.10") + ")";
+      ctx.fillRect(0, 0, w, depth);
+      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + "," + (g1 ? "0.20" : "0.10") + ")";
+      ctx.fillRect(0, h - depth, w, depth);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.strokeStyle = "rgba(" + PCOL_RGB[0] + ",0.45)";
+      ctx.beginPath();
+      ctx.moveTo(0, depth);
+      ctx.lineTo(w, depth);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(" + PCOL_RGB[1] + ",0.45)";
+      ctx.beginPath();
+      ctx.moveTo(0, h - depth);
+      ctx.lineTo(w, h - depth);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawNet() {
@@ -331,27 +365,25 @@
   }
 
   function drawChevron() {
-    if (state.mode === "play") return;
+    if (state.mode !== "serve") return;
     const w = state.w, h = state.h;
     const s = Math.min(w, h);
     const arm = s * 0.11;
     const thick = Math.max(8, s * 0.018);
     let cx, cy, ang;
     if (state.landscape) {
-      cx = w * 0.5;
+      cx = state.server === 0 ? w * 0.25 : w * 0.75;
       cy = h * 0.5;
-      ang = state.server === 0 ? Math.PI : 0;
+      ang = state.server === 0 ? 0 : Math.PI;
     } else {
       cx = w * 0.5;
-      cy = h * 0.5;
-      ang = state.server === 0 ? -Math.PI * 0.5 : Math.PI * 0.5;
+      cy = state.server === 0 ? h * 0.25 : h * 0.75;
+      ang = state.server === 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
     }
-
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(ang);
     ctx.strokeStyle = NEON;
-    ctx.fillStyle = NEON;
     ctx.shadowColor = NEON;
     ctx.shadowBlur = 22;
     ctx.lineWidth = thick;
@@ -369,17 +401,23 @@
     const w = state.w, h = state.h;
     const font = Math.max(28, Math.min(w, h) * 0.09);
     ctx.save();
-    ctx.fillStyle = NEON_DIM;
-    ctx.shadowColor = NEON;
-    ctx.shadowBlur = 12;
-    ctx.font = "700 " + font + "px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    ctx.font = "700 " + font + "px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    ctx.shadowBlur = 12;
     if (state.landscape) {
+      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
+      ctx.shadowColor = PCOL[0];
       ctx.fillText(String(state.scores[0]), w * 0.25, h * 0.12);
+      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
+      ctx.shadowColor = PCOL[1];
       ctx.fillText(String(state.scores[1]), w * 0.75, h * 0.12);
     } else {
+      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
+      ctx.shadowColor = PCOL[0];
       ctx.fillText(String(state.scores[0]), w * 0.12, h * 0.25);
+      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
+      ctx.shadowColor = PCOL[1];
       ctx.fillText(String(state.scores[1]), w * 0.12, h * 0.75);
     }
     ctx.restore();
@@ -392,8 +430,9 @@
       const t = Math.max(0, Math.min(1, w.r / MAX_RADIUS));
       const a = (1 - t) * (1 - t);
       if (a < 0.02) continue;
-      ctx.strokeStyle = "rgba(57,255,20," + (0.95 * a).toFixed(3) + ")";
-      ctx.shadowColor = NEON;
+      const rgb = PCOL_RGB[w.side];
+      ctx.strokeStyle = "rgba(" + rgb + "," + (0.95 * a).toFixed(3) + ")";
+      ctx.shadowColor = PCOL[w.side];
       ctx.shadowBlur = 22 * a;
       ctx.lineWidth = Math.max(1.2, 10 * (1 - t));
       ctx.beginPath();
@@ -431,6 +470,7 @@
 
   function draw() {
     fillBg();
+    drawTargetZones();
     drawNet();
     drawScores();
     drawChevron();
