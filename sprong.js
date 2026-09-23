@@ -20,8 +20,7 @@ const TARGET_W_PERC = 0.25;
 const GAMES_PER_SET = 3;
 const NEON = "#39ff14";
 const BALL = "#eeee33";
-const BG0 = "#020805";
-const BG1 = "#04140a";
+const BG_COL = "#020805";
 const PCOL = ["#2f9bff", "#ff3b3b"];
 const PCOL_RGB = ["47,155,255", "255,59,59"];
 
@@ -93,14 +92,6 @@ function resize() {
   else if (wasPortrait !== state.portrait) resetPoint(state.server);
 }
 
-function beginDraw() {
-  const dpr = state.dpr;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (state.portrait) {
-    ctx.translate(state.viewW, 0);
-    ctx.rotate(Math.PI / 2);
-  }
-}
 
 function screenToWorld(sx, sy) {
   if (!state.portrait) return { x: sx, y: sy };
@@ -355,13 +346,16 @@ function update(dt) {
   updateWaves(dt);
 }
 
-function fillBg() {
-  const w = state.w, h = state.h;
-  const g = ctx.createRadialGradient(w * 0.5, h * 0.5, Math.min(w, h) * 0.15, w * 0.5, h * 0.5, Math.max(w, h) * 0.7);
-  g.addColorStop(0, BG1);
-  g.addColorStop(1, BG0);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
+function beginDraw() {
+  const dpr = state.dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (state.portrait) {
+    ctx.translate(state.viewW, 0);
+    ctx.rotate(Math.PI / 2);
+  }
+  
+  ctx.fillStyle = BG_COL;
+  ctx.fillRect(0, 0, state.w, state.h);
 }
 
 function drawTargetZones() {
@@ -515,7 +509,6 @@ function drawMessage() {
 
 function draw() {
   beginDraw();
-  fillBg();
   drawTargetZones();
   drawNet();
   drawScores();
