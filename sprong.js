@@ -14,7 +14,6 @@
   const POINT_PAUSE_MS = 900;
   const HIT_LOCK_MS = 90;
   const NEON = "#39ff14";
-  const BALL = "#eeee33";
   const BG0 = "#020805";
   const BG1 = "#04140a";
   const PCOL = ["#2f9bff", "#ff3b3b"];
@@ -26,8 +25,10 @@
   const state = {
     w: 0,
     h: 0,
+    viewW: 0,
+    viewH: 0,
     dpr: 1,
-    landscape: true,
+    portrait: false,
     mode: "serve",
     server: 0,
     scores: [0, 0],
@@ -43,39 +44,48 @@
 
   function resize() {
     const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = w + "px";
-    canvas.style.height = h + "px";
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const wasLandscape = state.landscape;
-    state.w = w;
-    state.h = h;
+    const viewW = window.innerWidth;
+    const viewH = window.innerHeight;
+    canvas.width = Math.round(viewW * dpr);
+    canvas.height = Math.round(viewH * dpr);
+    canvas.style.width = viewW + "px";
+    canvas.style.height = viewH + "px";
+    const wasPortrait = state.portrait;
+    state.viewW = viewW;
+    state.viewH = viewH;
     state.dpr = dpr;
-    state.landscape = w >= h;
+    state.portrait = viewH > viewW;
+    state.w = Math.max(viewW, viewH);
+    state.h = Math.min(viewW, viewH);
     if (state.mode === "serve") parkBall();
-    else if (wasLandscape !== state.landscape) resetPoint(state.server);
+    else if (wasPortrait !== state.portrait) resetPoint(state.server);
   }
 
-  function sideOf(x, y) {
-    return state.landscape ? (x < state.w * 0.5 ? 0 : 1) : (y < state.h * 0.5 ? 0 : 1);
+  function beginDraw() {
+    const dpr = state.dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (state.portrait) {
+      ctx.translate(state.viewW, 0);
+      ctx.rotate(Math.PI / 2);
+    }
+  }
+
+  function screenToWorld(sx, sy) {
+    if (!state.portrait) return { x: sx, y: sy };
+    return { x: sy, y: state.h - sx };
+  }
+
+  function sideOf(x) {
+    return x < state.w * 0.5 ? 0 : 1;
   }
 
   function courtAxisToward(fromSide) {
-    if (state.landscape) return fromSide === 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
-    return fromSide === 0 ? { x: 0, y: 1 } : { x: 0, y: -1 };
+    return fromSide === 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
   }
 
-  function inTargetZone(side, x, y) {
-    const w = state.w, h = state.h;
-    if (state.landscape) {
-      const depth = w * 0.5 / 3;
-      return side === 0 ? x <= depth : x >= w - depth;
-    }
-    const depth = h * 0.5 / 3;
-    return side === 0 ? y <= depth : y >= h - depth;
+  function inTargetZone(side, x) {
+    const depth = state.w * 0.5 / 3;
+    return side === 0 ? x <= depth : x >= state.w - depth;
   }
 
   function parkBall() {
@@ -116,13 +126,8 @@
 
   function forceAcross(fromSide) {
     const b = state.ball;
-    if (state.landscape) {
-      if (fromSide === 0) b.vx = Math.max(BALL_MIN_ACROSS, Math.abs(b.vx));
-      else b.vx = -Math.max(BALL_MIN_ACROSS, Math.abs(b.vx));
-    } else {
-      if (fromSide === 0) b.vy = Math.max(BALL_MIN_ACROSS, Math.abs(b.vy));
-      else b.vy = -Math.max(BALL_MIN_ACROSS, Math.abs(b.vy));
-    }
+    if (fromSide === 0) b.vx = Math.max(BALL_MIN_ACROSS, Math.abs(b.vx));
+    else b.vx = -Math.max(BALL_MIN_ACROSS, Math.abs(b.vx));
   }
 
   function capSpeed() {
@@ -190,7 +195,7 @@
 
   function onTap(x, y) {
     if (x < 0 || y < 0 || x > state.w || y > state.h) return;
-    const side = sideOf(x, y);
+    const side = sideOf(x);
     if (state.mode === "pause") return;
     if (state.mode === "serve") {
       if (side === state.server) startToss(x, y);
@@ -204,13 +209,10 @@
   }
 
   function bindInput() {
-    const pos = (ev) => {
-      const r = canvas.getBoundingClientRect();
-      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
-    };
     canvas.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
-      const p = pos(ev);
+      const r = canvas.getBoundingClientRect();
+      const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
       onTap(p.x, p.y);
     }, { passive: false });
     canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
@@ -257,15 +259,9 @@
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     const missSide = state.lastHitter < 0 ? state.server : state.lastHitter;
-    if (state.landscape) {
-      if (b.x + half < 0) scoreAgainst(0);
-      else if (b.x - half > w) scoreAgainst(1);
-      else if (b.y + half < 0 || b.y - half > h) scoreAgainst(missSide);
-    } else {
-      if (b.y + half < 0) scoreAgainst(0);
-      else if (b.y - half > h) scoreAgainst(1);
-      else if (b.x + half < 0 || b.x - half > w) scoreAgainst(missSide);
-    }
+    if (b.x + half < 0) scoreAgainst(0);
+    else if (b.x - half > w) scoreAgainst(1);
+    else if (b.y + half < 0 || b.y - half > h) scoreAgainst(missSide);
   }
 
   function update(dt) {
@@ -301,47 +297,27 @@
 
   function drawTargetZones() {
     const w = state.w, h = state.h;
+    const depth = w * 0.5 / 3;
     const live = state.mode === "play" || state.mode === "toss";
-    const g0 = live && inTargetZone(0, state.ball.x, state.ball.y);
-    const g1 = live && inTargetZone(1, state.ball.x, state.ball.y);
+    const g0 = live && inTargetZone(0, state.ball.x);
+    const g1 = live && inTargetZone(1, state.ball.x);
     ctx.save();
-    if (state.landscape) {
-      const depth = w * 0.5 / 3;
-      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + "," + (g0 ? "0.20" : "0.10") + ")";
-      ctx.fillRect(0, 0, depth, h);
-      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + "," + (g1 ? "0.20" : "0.10") + ")";
-      ctx.fillRect(w - depth, 0, depth, h);
-      ctx.lineWidth = 2;
-      ctx.setLineDash([10, 8]);
-      ctx.strokeStyle = "rgba(" + PCOL_RGB[0] + ",0.45)";
-      ctx.beginPath();
-      ctx.moveTo(depth, 0);
-      ctx.lineTo(depth, h);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(" + PCOL_RGB[1] + ",0.45)";
-      ctx.beginPath();
-      ctx.moveTo(w - depth, 0);
-      ctx.lineTo(w - depth, h);
-      ctx.stroke();
-    } else {
-      const depth = h * 0.5 / 3;
-      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + "," + (g0 ? "0.20" : "0.10") + ")";
-      ctx.fillRect(0, 0, w, depth);
-      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + "," + (g1 ? "0.20" : "0.10") + ")";
-      ctx.fillRect(0, h - depth, w, depth);
-      ctx.lineWidth = 2;
-      ctx.setLineDash([10, 8]);
-      ctx.strokeStyle = "rgba(" + PCOL_RGB[0] + ",0.45)";
-      ctx.beginPath();
-      ctx.moveTo(0, depth);
-      ctx.lineTo(w, depth);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(" + PCOL_RGB[1] + ",0.45)";
-      ctx.beginPath();
-      ctx.moveTo(0, h - depth);
-      ctx.lineTo(w, h - depth);
-      ctx.stroke();
-    }
+    ctx.fillStyle = "rgba(" + PCOL_RGB[0] + "," + (g0 ? "0.20" : "0.10") + ")";
+    ctx.fillRect(0, 0, depth, h);
+    ctx.fillStyle = "rgba(" + PCOL_RGB[1] + "," + (g1 ? "0.20" : "0.10") + ")";
+    ctx.fillRect(w - depth, 0, depth, h);
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 8]);
+    ctx.strokeStyle = "rgba(" + PCOL_RGB[0] + ",0.45)";
+    ctx.beginPath();
+    ctx.moveTo(depth, 0);
+    ctx.lineTo(depth, h);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(" + PCOL_RGB[1] + ",0.45)";
+    ctx.beginPath();
+    ctx.moveTo(w - depth, 0);
+    ctx.lineTo(w - depth, h);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -352,15 +328,8 @@
     ctx.shadowBlur = 18;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    if (state.landscape) {
-      const x = state.w * 0.5;
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, state.h);
-    } else {
-      const y = state.h * 0.5;
-      ctx.moveTo(0, y);
-      ctx.lineTo(state.w, y);
-    }
+    ctx.moveTo(state.w * 0.5, 0);
+    ctx.lineTo(state.w * 0.5, state.h);
     ctx.stroke();
     ctx.restore();
   }
@@ -371,16 +340,9 @@
     const s = Math.min(w, h);
     const arm = s * 0.11;
     const thick = Math.max(8, s * 0.018);
-    let cx, cy, ang;
-    if (state.landscape) {
-      cx = state.server === 0 ? w * 0.25 : w * 0.75;
-      cy = h * 0.5;
-      ang = state.server === 0 ? 0 : Math.PI;
-    } else {
-      cx = w * 0.5;
-      cy = state.server === 0 ? h * 0.25 : h * 0.75;
-      ang = state.server === 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
-    }
+    const cx = state.server === 0 ? w * 0.25 : w * 0.75;
+    const cy = h * 0.5;
+    const ang = state.server === 0 ? 0 : Math.PI;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(ang);
@@ -406,21 +368,12 @@
     ctx.textBaseline = "middle";
     ctx.font = "700 " + font + "px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     ctx.shadowBlur = 12;
-    if (state.landscape) {
-      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
-      ctx.shadowColor = PCOL[0];
-      ctx.fillText(String(state.scores[0]), w * 0.25, h * 0.12);
-      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
-      ctx.shadowColor = PCOL[1];
-      ctx.fillText(String(state.scores[1]), w * 0.75, h * 0.12);
-    } else {
-      ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
-      ctx.shadowColor = PCOL[0];
-      ctx.fillText(String(state.scores[0]), w * 0.12, h * 0.25);
-      ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
-      ctx.shadowColor = PCOL[1];
-      ctx.fillText(String(state.scores[1]), w * 0.12, h * 0.75);
-    }
+    ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
+    ctx.shadowColor = PCOL[0];
+    ctx.fillText(String(state.scores[0]), w * 0.25, h * 0.12);
+    ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
+    ctx.shadowColor = PCOL[1];
+    ctx.fillText(String(state.scores[1]), w * 0.75, h * 0.12);
     ctx.restore();
   }
 
@@ -431,8 +384,7 @@
       const t = Math.max(0, Math.min(1, w.r / MAX_RADIUS));
       const a = (1 - t) * (1 - t);
       if (a < 0.02) continue;
-      const rgb = PCOL_RGB[w.side];
-      ctx.strokeStyle = "rgba(" + rgb + "," + (0.95 * a).toFixed(3) + ")";
+      ctx.strokeStyle = "rgba(" + PCOL_RGB[w.side] + "," + (0.95 * a).toFixed(3) + ")";
       ctx.shadowColor = PCOL[w.side];
       ctx.shadowBlur = 22 * a;
       ctx.lineWidth = Math.max(1.2, 10 * (1 - t));
@@ -448,14 +400,26 @@
     const b = state.ball;
     const s = b.size;
     ctx.save();
-    ctx.fillStyle = BALL;
-    ctx.shadowColor = BALL;
+    ctx.fillStyle = NEON;
+    ctx.shadowColor = NEON;
     ctx.shadowBlur = 20 + (s - BALL_BASE) * 0.4;
     ctx.fillRect(b.x - s * 0.5, b.y - s * 0.5, s, s);
     ctx.restore();
   }
 
+  function drawHint() {
+    if (state.mode === "play" || state.mode === "pause") return;
+    ctx.save();
+    ctx.fillStyle = "rgba(57,255,20,0.35)";
+    ctx.font = "600 " + Math.max(12, Math.min(state.w, state.h) * 0.028) + "px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(state.mode === "toss" ? "TAP TO SERVE" : "SERVER TAP TO TOSS", state.w * 0.5, state.h * 0.88);
+    ctx.restore();
+  }
+
   function draw() {
+    beginDraw();
     fillBg();
     drawTargetZones();
     drawNet();
@@ -463,6 +427,7 @@
     drawChevron();
     drawWaves();
     drawBall();
+    drawHint();
   }
 
   function frame(now) {
