@@ -392,8 +392,6 @@ function drawTargetZones() {
 function drawNet() {
   ctx.save();
   ctx.strokeStyle = NEON;
-  ctx.shadowColor = NEON;
-  ctx.shadowBlur = 18;
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(state.w * 0.5, 0);
@@ -419,8 +417,6 @@ function drawChevron() {
   ctx.translate(cx, cy);
   ctx.rotate(ang);
   ctx.strokeStyle = NEON;
-  ctx.shadowColor = NEON;
-  ctx.shadowBlur = 22;
   ctx.lineWidth = thick;
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
@@ -447,14 +443,11 @@ function drawScores() {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.font = "700 " + font + "px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-  ctx.shadowBlur = 12;
 
   ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
-  ctx.shadowColor = PCOL[0];
   ctx.fillText(POINT_SCORE_FORMAT[scores[0].p], woffset, hoffset);
 
-  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
-  ctx.shadowColor = PCOL[1];
+  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";  
   ctx.fillText(POINT_SCORE_FORMAT[scores[1].p], w - woffset, hoffset);
 
   const boxH = 10;
@@ -466,12 +459,10 @@ function drawScores() {
   const gamesY = hoffset + font * 0.42 + boxH * 0.5;
 
   ctx.lineWidth = 1.5;
-  ctx.shadowBlur = 6;
   for (let i = 0; i < 2; i++) {
     const won = scores[i].g;
     const areaLeft = i === 0 ? gamesX: w - gamesW-gamesX;
     ctx.strokeStyle = PCOL[i];
-    ctx.shadowColor = PCOL[i];
     ctx.fillStyle = "rgba(" + PCOL_RGB[i] + ",0.55)";
     for (let g = 0; g < GAMES_PER_SET; g++) {
       const x = areaLeft + g * slotW + pad;
@@ -493,8 +484,6 @@ function drawWaves() {
     const a = (1 - t) * (1 - t);
     if (a < 0.02) continue;
     ctx.strokeStyle = "rgba(" + PCOL_RGB[w.side] + "," + (0.95 * a).toFixed(3) + ")";
-    ctx.shadowColor = PCOL[w.side];
-    ctx.shadowBlur = 22 * a;
     ctx.lineWidth = Math.max(1.2, 10 * (1 - t));
     ctx.beginPath();
     ctx.arc(w.x, w.y, Math.max(0.5, w.r), 0, Math.PI * 2);
@@ -509,8 +498,6 @@ function drawBall() {
   const s = BALL_BASE + (BALL_TOSS_PEAK - BALL_BASE) * state.ball.z;
   ctx.save();
   ctx.fillStyle = BALL;
-  ctx.shadowColor = BALL;
-  ctx.shadowBlur = 20 + (s - BALL_BASE) * 0.4;
   ctx.fillRect(b.x - s * 0.5, b.y - s * 0.5, s, s);
   ctx.restore();
 }
