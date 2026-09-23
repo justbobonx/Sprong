@@ -283,12 +283,8 @@ function resetUp() {
 }
 
 function bindInput() {
-  canvas.addEventListener("pointerdown", (ev) => {
-    ev.preventDefault();
-    if (state.mode === "title") {
-      startGame();
-      return;
-    }
+  canvas.addEventListener("pointerdown", (ev) => {   
+    if (state.mode === "title") return;
     const r = canvas.getBoundingClientRect();
     const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
     if( !inTargetZone(0,p.x) && !inTargetZone(1,p.x) ){
@@ -298,6 +294,15 @@ function bindInput() {
   }, { passive: false });  
   
   canvas.addEventListener('pointerup', () => resetUp());
+  
+  canvas.addEventListener('click', (ev) => {   
+   ev.preventDefault();
+    if (state.mode === "title") {
+      startGame();
+      return;
+    }
+  });
+  
   canvas.addEventListener('pointercancel', () => resetUp());
   canvas.addEventListener('lostpointercapture', () => resetUp());
 
