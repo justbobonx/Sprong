@@ -53,20 +53,12 @@
     state.h = h;
     state.dpr = dpr;
     state.landscape = w >= h;
-    if (state.mode !== "play") parkBall();
+    if (state.mode === "serve") parkBall();
     else if (wasLandscape !== state.landscape) resetPoint(state.server);
-  }
-
-  function mid() {
-    return state.landscape ? state.w * 0.5 : state.h * 0.5;
   }
 
   function sideOf(x, y) {
     return state.landscape ? (x < state.w * 0.5 ? 0 : 1) : (y < state.h * 0.5 ? 0 : 1);
-  }
-
-  function ballSide() {
-    return sideOf(state.ball.x, state.ball.y);
   }
 
   function courtAxisToward(fromSide) {
@@ -75,18 +67,12 @@
   }
 
   function parkBall() {
-    const w = state.w, h = state.h;
     const b = state.ball;
     b.vx = 0;
     b.vy = 0;
     b.size = BALL_BASE;
-    if (state.landscape) {
-      b.y = h * 0.5;
-      b.x = state.server === 0 ? w * 0.22 : w * 0.78;
-    } else {
-      b.x = w * 0.5;
-      b.y = state.server === 0 ? h * 0.22 : h * 0.78;
-    }
+    b.x = -9999;
+    b.y = -9999;
   }
 
   function resetPoint(server) {
@@ -100,11 +86,14 @@
     parkBall();
   }
 
-  function startToss() {
+  function startToss(x, y) {
     state.mode = "toss";
     state.tossT = 0;
     state.ball.vx = 0;
     state.ball.vy = 0;
+    state.ball.x = x;
+    state.ball.y = y;
+    state.ball.size = BALL_BASE;
   }
 
   function tossHeight() {
@@ -127,8 +116,6 @@
     }
     const tdx = dx / dist;
     const tdy = dy / dist;
-    // current dir is the toss "up" encoded as size; serve multiplies toss dir (toward other side)
-    // with tap-to-ball dir. closer tap + higher toss = faster.
     const reach = Math.max(0, 1 - dist / MAX_RADIUS);
     b.vx = toward.x * speed + tdx * speed * (0.35 + 0.4 * reach);
     b.vy = toward.y * speed + tdy * speed * (0.35 + 0.4 * reach);
@@ -179,7 +166,6 @@
       cdy = t.y;
     }
     const reach = Math.max(0.12, 1 - dist / MAX_RADIUS);
-    // current dir * tap dir * reach, then push back across
     b.vx = (cdx * spd * HIT_KEEP) + (tdx * HIT_IMPULSE * reach);
     b.vy = (cdy * spd * HIT_KEEP) + (tdy * HIT_IMPULSE * reach);
     const push = HIT_PUSH * reach;
@@ -207,24 +193,27 @@
       r: 0,
       prev: 0,
       hit: false,
+      born: true,
     });
   }
 
   function onTap(x, y) {
     if (x < 0 || y < 0 || x > state.w || y > state.h) return;
     const side = sideOf(x, y);
-    spawnWave(x, y, side);
 
     if (state.mode === "pause") return;
 
     if (state.mode === "serve") {
-      if (side === state.server) startToss();
+      if (side === state.server) startToss(x, y);
       return;
     }
 
     if (state.mode === "toss") {
       if (side === state.server) applyServe(x, y);
+      return;
     }
+
+    if (state.mode === "play") spawnWave(x, y, side);
   }
 
   function bindInput() {
@@ -254,7 +243,8 @@
     for (let i = state.waves.length - 1; i >= 0; i--) {
       const w = state.waves[i];
       w.prev = w.r;
-      w.r += WAVE_SPEED * dt;
+      if (w.born) w.born = false;
+      else w.r += WAVE_SPEED * dt;
       if (!w.hit && !lock && state.mode === "play") {
         const dist = Math.hypot(b.x - w.x, b.y - w.y);
         const pad = b.size * 0.5;
@@ -299,7 +289,7 @@
       if (state.tossT >= TOSS_MS) {
         state.mode = "serve";
         state.tossT = 0;
-        state.ball.size = BALL_BASE;
+        parkBall();
       }
     } else if (state.mode === "play") {
       updateBall(dt);
@@ -399,20 +389,22 @@
     ctx.save();
     ctx.lineCap = "round";
     for (const w of state.waves) {
-      const t = w.r / MAX_RADIUS;
-      const a = Math.max(0, 1 - t);
-      ctx.strokeStyle = "rgba(57,255,20," + (0.85 * a).toFixed(3) + ")";
+      const t = Math.max(0, Math.min(1, w.r / MAX_RADIUS));
+      const a = (1 - t) * (1 - t);
+      if (a < 0.02) continue;
+      ctx.strokeStyle = "rgba(57,255,20," + (0.95 * a).toFixed(3) + ")";
       ctx.shadowColor = NEON;
-      ctx.shadowBlur = 16 * a;
-      ctx.lineWidth = Math.max(1.5, 7 * (1 - t * 0.7));
+      ctx.shadowBlur = 22 * a;
+      ctx.lineWidth = Math.max(1.2, 10 * (1 - t));
       ctx.beginPath();
-      ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
+      ctx.arc(w.x, w.y, Math.max(0.5, w.r), 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
   }
 
   function drawBall() {
+    if (state.mode === "serve") return;
     const b = state.ball;
     const s = b.size;
     ctx.save();
