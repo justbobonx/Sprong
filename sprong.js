@@ -2,16 +2,15 @@
   sprong is tennis pong ?
   NO.  It is SPRONG!
  */
-const MAX_RADIUS = 300;
-const WAVE_SPEED = 1200;
-const BALL_BASE = 16;
-const BALL_TOSS_PEAK = 56;
-const TOSS_MS = 1100;
+const MAX_RADIUS = 200;
+const WAVE_SPEED = 800;
+const TOSS_MS = 1400;
 const SERVE_MIN = 420;
 const SERVE_MAX = 980;
 const HIT_KEEP = 0.45;
 const HIT_IMPULSE = 720;
 const HIT_PUSH = 280;
+const BALL_BASE = 20;
 const BALL_MAX_SPEED = 1400;
 const BALL_MIN_ACROSS = 260;
 const POINT_PAUSE_MS = 900;
@@ -135,10 +134,12 @@ function inTargetZone(side, x) {
 function parkBall() {
   const b = state.ball;
   b.vx = 0;
-  b.vy = 0;
-  b.size = BALL_BASE;
+  b.vy = 0;    
   b.x = -9999;
   b.y = -9999;
+  b.z = 0;
+  b.vr = 0;
+  b.r = 0;
 }
 
 function newPoint(server) {
@@ -161,6 +162,8 @@ function startToss(x, y) {
   state.ball.x = x;
   state.ball.y = y;
   state.ball.z = 0;
+  state.ball.r = Math.random()*Math.PI;
+  state.ball.vr = .02;
 }
 
 function forceAcross(fromSide) {
@@ -318,7 +321,7 @@ function bindInput() {
 function waveTouchesBall(w) {
   const b = state.ball;
   const dist = Math.hypot(b.x - w.x, b.y - w.y);
-  const pad = b.size * 0.5;
+  const pad = BALL_BASE * 0.5;
   return w.prev <= dist + pad && w.r >= dist - pad && dist <= MAX_RADIUS + pad;
 }
 
@@ -355,6 +358,8 @@ function updateBall(dt) {
   else if (b.y + half < 0 || b.y - half > h) scoreFor((missSide+1)%2);
   
   state.ball.z = Math.max( 0, state.ball.z-.1 );
+  
+  state.ball.r+=state.ball.vr;
 }
 
 function update(dt) {
@@ -364,7 +369,8 @@ function update(dt) {
   if (state.mode === "toss") {
     state.tossT += ms;
     const t = Math.max(0, Math.min(1, state.tossT / TOSS_MS));
-    state.ball.z = 4 * t * (1 - t);      
+    state.ball.z = 20 * t * (1 - t);  
+    state.ball.r+=state.ball.vr;
     if (state.tossT >= TOSS_MS) {
       state.mode = "serve";
       state.tossT = 0;
@@ -537,10 +543,12 @@ function drawWaves() {
 function drawBall() {
   if (state.mode === "serve") return;
   const b = state.ball;
-  const s = BALL_BASE + (BALL_TOSS_PEAK - BALL_BASE) * state.ball.z;
+  const s = BALL_BASE + Math.pow( state.ball.z, 2.2);
   ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(b.r);
   ctx.fillStyle = BALL;
-  ctx.fillRect(b.x - s * 0.5, b.y - s * 0.5, s, s);
+  ctx.fillRect(-s * 0.5, -s * 0.5, s, s);
   ctx.restore();
 }
 
