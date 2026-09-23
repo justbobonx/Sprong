@@ -67,6 +67,7 @@ function loadState() {
     const raw = localStorage.getItem('state');
     if (raw == null) return;
     state = JSON.parse(raw);
+    state.last=0;
   } catch (e) {
     console.error('loadState failed', e);
   }
@@ -518,14 +519,21 @@ function draw() {
   drawMessage();
 }
 
+const FPS_GOAL = 60;
+const FRAME_MS = 1000 / FPS_GOAL;
+
 function frame(now) {
+  requestAnimationFrame(frame);
   if (!state.last) state.last = now;
-  let dt = (now - state.last) / 1000;
-  state.last = now;
+  const elapsed = now - state.last;
+  if (elapsed < FRAME_MS) return;
+
+  state.last = now - (elapsed % FRAME_MS);
+  let dt = elapsed / 1000;
   if (dt > 0.05) dt = 0.05;
+
   update(dt);
   draw();
-  requestAnimationFrame(frame);
 }
 
 window.addEventListener("resize", resize);
