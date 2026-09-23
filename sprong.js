@@ -41,7 +41,7 @@ var state = {
   viewH: 0,
   dpr: 1,
   portrait: false,
-  mode: "title",
+  mode: "init",
   server: 0,
   scores: [{p:0,g:0,s:0}, {p:0,g:0,s:0}],
   showGames: 0,
@@ -395,6 +395,9 @@ function drawTitle() {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("SPRONG", state.w * 0.5, state.h * 0.5);
+  
+  ctx.font = "300 " + font/8 + "px ui-sans-serif, system-ui, sans-serif";
+  ctx.fillText("version", state.w * 0.5, state.h * 0.95);
   ctx.restore();
 }
 
@@ -607,5 +610,9 @@ window.addEventListener("orientationchange", () => setTimeout(resize, 80));
 resize();
 bindInput();
 
-requestAnimationFrame(frame);
+setTimeout( ()=> {
+  state.mode="title";
+  requestAnimationFrame(frame);
+}, 100 );
+
 
