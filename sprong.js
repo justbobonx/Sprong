@@ -5,16 +5,10 @@
 const MAX_RADIUS = 200;
 const WAVE_SPEED = 800;
 const TOSS_MS = 1400;
-const SERVE_MIN = 420;
-const SERVE_MAX = 980;
-const HIT_KEEP = 0.45;
-const HIT_IMPULSE = 720;
-const HIT_PUSH = 280;
-const BALL_BASE = 20;
-const BALL_MAX_SPEED = 1400;
-const BALL_MIN_ACROSS = 260;
 const POINT_PAUSE_MS = 900;
-const HIT_LOCK_MS = 90;
+const DEAD_FADE_MS = 520;
+const KILL_X_ALPHA = 0.3;
+const KILL_X_ARM = 9;
 const TARGET_W_PERC = 0.25;
 const GAMES_PER_SET = 3;
 const NEON = "#39ff14";
@@ -44,13 +38,15 @@ var state = {
   server: 0,
   scores: [{p:0,g:0,s:0}, {p:0,g:0,s:0}],
   showGames: 0,
-  ball: { x: 0, y: 0, vx: 0, vy: 0, z:0, r: 0, vr:0 },
+  ball: ballFresh(),
   tossT: 0,
   waves: [],
-  hitLock: 0,
   pauseT: 0,
   scoredBy: -1,
   lastHitter: -1,
+  rallyMax: VOLLEY_MAX_START,
+  marks: [],
+  deadFade: 1,
   last: 0,
 };
 
@@ -66,31 +62,40 @@ function loadState() {
   try {
     const raw = localStorage.getItem('state');
     if (raw == null) return;
-    state = JSON.parse(raw);
-    state.last=0;
+    const loaded = JSON.parse(raw);
+    loaded.last = 0;
+    if (!loaded.ball || typeof loaded.ball !== "object") loaded.ball = ballFresh();
+    else {
+      if (!loaded.ball.trail) loaded.ball.trail = [];
+      if (loaded.ball.vz == null) loaded.ball.vz = 0;
+      if (loaded.ball.trailT == null) loaded.ball.trailT = 0;
+    }
+    if (loaded.rallyMax == null) loaded.rallyMax = VOLLEY_MAX_START;
+    if (!loaded.marks) loaded.marks = [];
+    if (loaded.deadFade == null) loaded.deadFade = 1;
+    state = loaded;
   } catch (e) {
     console.error('loadState failed', e);
   }
 }
 
 function requestPageFullscreen() {
-    const el = document.documentElement;
-    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
-    if (!req) return Promise.resolve();
-    try {
-      const p = req.call(el);
-      if (p && typeof p.then === "function") return p.catch(function () {});
-    } catch (err) {}
-    return Promise.resolve();
-  }
-  
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+  if (!req) return Promise.resolve();
+  try {
+    const p = req.call(el);
+    if (p && typeof p.then === "function") return p.catch(function () {});
+  } catch (err) {}
+  return Promise.resolve();
+}
+
 function startGame() {
   if (state.mode !== "title") return;
   loadState();
   const startServer = state.scoredBy >=0 ? state.scoredBy : Math.round(Math.random());
   newPoint(startServer);
-  
-  requestPageFullscreen();  
+  requestPageFullscreen();
 }
 
 function resize() {
@@ -102,6 +107,8 @@ function resize() {
   canvas.style.width = viewW + "px";
   canvas.style.height = viewH + "px";
   const wasPortrait = state.portrait;
+  const oldW = state.w;
+  const oldH = state.h;
   state.viewW = viewW;
   state.viewH = viewH;
   state.dpr = dpr;
@@ -109,7 +116,15 @@ function resize() {
   state.w = Math.max(viewW, viewH);
   state.h = Math.min(viewW, viewH);
   state.targetW = state.w * 0.5 * TARGET_W_PERC;
-  if (state.mode === "serve") parkBall();
+  if (oldW > 0 && oldH > 0 && (oldW !== state.w || oldH !== state.h) && state.marks) {
+    const sx = state.w / oldW;
+    const sy = state.h / oldH;
+    for (let i = 0; i < state.marks.length; i++) {
+      state.marks[i].x *= sx;
+      state.marks[i].y *= sy;
+    }
+  }
+  if (state.mode === "serve") ballPark(state.ball);
   else if (wasPortrait !== state.portrait) newPoint(state.server);
 }
 
@@ -122,24 +137,9 @@ function sideOf(x) {
   return x < state.w * 0.5 ? 0 : 1;
 }
 
-function courtAxisToward(fromSide) {
-  return fromSide === 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
-}
-
 function inTargetZone(side, x) {
   const depth = state.w * 0.5 / 3;
   return side === 0 ? x <= depth : x >= state.w - depth;
-}
-
-function parkBall() {
-  const b = state.ball;
-  b.vx = 0;
-  b.vy = 0;    
-  b.x = -9999;
-  b.y = -9999;
-  b.z = 0;
-  b.vr = 0;
-  b.r = 0;
 }
 
 function newPoint(server) {
@@ -147,106 +147,78 @@ function newPoint(server) {
   state.mode = "serve";
   state.tossT = 0;
   state.waves.length = 0;
-  state.hitLock = 0;
   state.pauseT = 0;
   state.scoredBy = -1;
   state.lastHitter = -1;
-  parkBall();
+  state.rallyMax = VOLLEY_MAX_START;
+  state.deadFade = 1;
+  ballPark(state.ball);
 }
 
 function startToss(x, y) {
   state.mode = "toss";
   state.tossT = 0;
-  state.ball.vx = 0;
-  state.ball.vy = 0;
-  state.ball.x = x;
-  state.ball.y = y;
-  state.ball.z = 0;
-  state.ball.r = Math.random()*Math.PI;
-  state.ball.vr = .02;
+  ballBeginToss(state.ball, x, y);
 }
 
-function forceAcross(fromSide) {
-  const b = state.ball;
-  if (fromSide === 0) b.vx = Math.max(BALL_MIN_ACROSS, Math.abs(b.vx));
-  else b.vx = -Math.max(BALL_MIN_ACROSS, Math.abs(b.vx));
+function pinBallToCourt(b) {
+  if (b.x < 0) b.x = 0;
+  else if (b.x > state.w) b.x = state.w;
+  if (b.y < 0) b.y = 0;
+  else if (b.y > state.h) b.y = state.h;
 }
 
-function capSpeed() {
-  const b = state.ball;
-  const s = Math.hypot(b.vx, b.vy);
-  if (s > BALL_MAX_SPEED) {
-    const k = BALL_MAX_SPEED / s;
-    b.vx *= k;
-    b.vy *= k;
-  }
-}
-
-function applyHit(tapX, tapY, fromSide, serveBoost) {
-  const b = state.ball;
-  let dx = b.x - tapX;
-  let dy = b.y - tapY;
-  let dist = Math.hypot(dx, dy);
-  if (dist < 1) dist = 1;
-  const tdx = dx / dist;
-  const tdy = dy / dist;
-  const spd = Math.hypot(b.vx, b.vy);
-  let cdx, cdy;
-  if (spd > 8) {
-    cdx = b.vx / spd;
-    cdy = b.vy / spd;
-  } else {
-    const t = courtAxisToward(fromSide);
-    cdx = t.x;
-    cdy = t.y;
-  }
-  const reach = Math.max(0.12, 1 - dist / MAX_RADIUS);
-  b.vx = (cdx * spd * HIT_KEEP) + (tdx * HIT_IMPULSE * reach);
-  b.vy = (cdy * spd * HIT_KEEP) + (tdy * HIT_IMPULSE * reach);
-  const push = HIT_PUSH * reach;
-  const toward = courtAxisToward(fromSide);
-  b.vx += toward.x * push;
-  b.vy += toward.y * push;
-  if (serveBoost > 0) {
-    const speed = SERVE_MIN + (SERVE_MAX - SERVE_MIN) * serveBoost;
-    const s = Math.hypot(b.vx, b.vy);
-    const k = speed / Math.max(s, 1);
-    b.vx *= Math.max(1, k);
-    b.vy *= Math.max(1, k);
-  }
-  forceAcross(fromSide);
-  capSpeed();
-  b.size = BALL_BASE;
-  state.lastHitter = fromSide;
-  state.hitLock = HIT_LOCK_MS;
-}
-
-function scoreFor(winner) {  
+function scoreFor(winner) {
   const winscore = state.scores[winner];
-  //game
   winscore.p+=1;
-  //set
   if( winscore.p==4 ){
     winscore.g+=1;
     state.scores[0].p=0;
     state.scores[1].p=0;
     state.showGames=1;
   }
-  //match
-  
+
+  const b = state.ball;
+  pinBallToCourt(b);
+  state.marks.push({ x: b.x, y: b.y });
+
   state.mode = "pause";
   messageText = "POINT FOR "+(winner==state.server ? "SERVE" : "RECEIVE");
   setTimeout( ()=>{ messageText="" }, POINT_PAUSE_MS );
   state.pauseT = 0;
   state.scoredBy = winner;
-  state.ball.vx = 0;
-  state.ball.vy = 0;
-  
+  b.vx = 0;
+  b.vy = 0;
+  b.vz = 0;
+  state.deadFade = 1;
+
   saveState();
 }
 
 function spawnWave(x, y, side) {
-  state.waves.push({ x, y, side, r: 0, prev: 0, hit: false, born: true });
+  state.waves.push({ x, y, side, r: 0, prev: 0, born: true });
+}
+
+function tryStrike(tapX, tapY, side, isServe) {
+  if (sideOf(tapX) !== side) return false;
+  if (!isServe && state.lastHitter === side) return false;
+  const b = state.ball;
+  const power = ballTapPower(b, tapX, tapY);
+  if (power < 0) return false;
+
+  let speed;
+  if (isServe) {
+    const boost = ballServeBoost(b.z);
+    speed = SERVE_MIN + (SERVE_MAX - SERVE_MIN) * boost;
+  } else {
+    speed = VOLLEY_MIN + power * (state.rallyMax - VOLLEY_MIN);
+    state.rallyMax += VOLLEY_STEP;
+    if (state.rallyMax > BALL_MAX_SPEED) state.rallyMax = BALL_MAX_SPEED;
+  }
+
+  ballLaunch(b, tapX, tapY, side, speed, power);
+  state.lastHitter = side;
+  return true;
 }
 
 function onTap(x, y) {
@@ -258,23 +230,29 @@ function onTap(x, y) {
     return;
   }
   if (state.mode === "toss") {
-    if (side === state.server) spawnWave(x, y, side);
+    if (side !== state.server) return;
+    spawnWave(x, y, side);
+    if (tryStrike(x, y, side, true)) state.mode = "play";
     return;
   }
-  if (state.mode === "play") spawnWave(x, y, side);
+  if (state.mode === "play") {
+    spawnWave(x, y, side);
+    tryStrike(x, y, side, false);
+  }
 }
 
 function resetDown() {
   if( state.mode!=="serve" ) return;
-  
+
   clearTimeout(resetHoldTimer);
   resetHoldTimer = setTimeout(() => {
     resetHoldStart = 0;
     messageText = "";
-    state.scores = [{p:0,g:0,s:0}, {p:0,g:0,s:0}]; 
-    newPoint(Math.round(Math.random()));    
-    saveState();    
-  }, RESET_HOLD_MS);  
+    state.scores = [{p:0,g:0,s:0}, {p:0,g:0,s:0}];
+    state.marks = [];
+    newPoint(Math.round(Math.random()));
+    saveState();
+  }, RESET_HOLD_MS);
   resetHoldStart = state.now;
 }
 
@@ -286,7 +264,7 @@ function resetUp() {
 }
 
 function bindInput() {
-  canvas.addEventListener("pointerdown", (ev) => {   
+  canvas.addEventListener("pointerdown", (ev) => {
     if (state.mode === "title") return;
     const r = canvas.getBoundingClientRect();
     const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
@@ -294,18 +272,18 @@ function bindInput() {
       resetDown();
     }
     onTap(p.x, p.y);
-  }, { passive: false });  
-  
+  }, { passive: false });
+
   canvas.addEventListener('pointerup', () => resetUp());
-  
-  canvas.addEventListener('click', (ev) => {   
-   ev.preventDefault();
+
+  canvas.addEventListener('click', (ev) => {
+    ev.preventDefault();
     if (state.mode === "title") {
       startGame();
       return;
     }
   });
-  
+
   canvas.addEventListener('pointercancel', () => resetUp());
   canvas.addEventListener('lostpointercapture', () => resetUp());
 
@@ -318,69 +296,47 @@ function bindInput() {
   });
 }
 
-function waveTouchesBall(w) {
-  const b = state.ball;
-  const dist = Math.hypot(b.x - w.x, b.y - w.y);
-  const pad = BALL_BASE * 0.5;
-  return w.prev <= dist + pad && w.r >= dist - pad && dist <= MAX_RADIUS + pad;
-}
-
 function updateWaves(dt) {
-  const lock = state.hitLock > 0;
   for (let i = state.waves.length - 1; i >= 0; i--) {
     const w = state.waves[i];
     w.prev = w.r;
     if (w.born) w.born = false;
     else w.r += WAVE_SPEED * dt;
-    if (!w.hit && !lock) {
-      if (state.mode === "toss" && w.side === state.server && waveTouchesBall(w)) {
-        w.hit = true;
-        applyHit(w.x, w.y, w.side, state.ball.z);
-        state.mode = "play";
-      } else if (state.mode === "play" && waveTouchesBall(w)) {
-        w.hit = true;
-        applyHit(w.x, w.y, w.side, 0);
-      }
-    }
     if (w.r >= MAX_RADIUS) state.waves.splice(i, 1);
   }
 }
 
-function updateBall(dt) {
+function updatePlay(dt) {
   const b = state.ball;
-  const w = state.w, h = state.h;
-  const half = b.size * 0.5;
-  b.x += b.vx * dt;
-  b.y += b.vy * dt;
+  ballStep(b, dt);
+  const half = BALL_BASE * 0.5;
   const missSide = state.lastHitter < 0 ? state.server : state.lastHitter;
   if (b.x + half < 0) scoreFor(1);
-  else if (b.x - half > w) scoreFor(0);
-  else if (b.y + half < 0 || b.y - half > h) scoreFor((missSide+1)%2);
-  
-  state.ball.z = Math.max( 0, state.ball.z-.1 );
-  
-  state.ball.r+=state.ball.vr;
+  else if (b.x - half > state.w) scoreFor(0);
+  else if (b.y + half < 0 || b.y - half > state.h) scoreFor((missSide+1)%2);
 }
 
 function update(dt) {
   if (state.mode === "title") return;
   const ms = dt * 1000;
-  if (state.hitLock > 0) state.hitLock -= ms;
   if (state.mode === "toss") {
     state.tossT += ms;
     const t = Math.max(0, Math.min(1, state.tossT / TOSS_MS));
-    state.ball.z = 20 * t * (1 - t);  
-    state.ball.r+=state.ball.vr;
+    const b = state.ball;
+    b.z = ballTossZ(t);
+    b.r += b.vr * dt;
     if (state.tossT >= TOSS_MS) {
       state.mode = "serve";
       state.tossT = 0;
       state.waves.length = 0;
-      parkBall();
+      ballPark(b);
     }
   } else if (state.mode === "play") {
-    updateBall(dt);
+    updatePlay(dt);
   } else if (state.mode === "pause") {
     state.pauseT += ms;
+    state.deadFade -= ms / DEAD_FADE_MS;
+    if (state.deadFade < 0) state.deadFade = 0;
     if (state.pauseT >= POINT_PAUSE_MS) newPoint(state.scoredBy);
   }
   updateWaves(dt);
@@ -393,7 +349,7 @@ function beginDraw() {
     ctx.translate(state.viewW, 0);
     ctx.rotate(Math.PI / 2);
   }
-  
+
   ctx.fillStyle = BG_COL;
   ctx.fillRect(0, 0, state.w, state.h);
 }
@@ -406,14 +362,14 @@ function drawTitle() {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("SPRONG", state.w * 0.5, state.h * 0.5);
-  
+
   ctx.font = "300 " + font/8 + "px ui-sans-serif, system-ui, sans-serif";
   ctx.fillText("version", state.w * 0.5, state.h * 0.95);
   ctx.restore();
 }
 
 function drawTargetZones() {
-  const w = state.w, h = state.h, depth = state.targetW;    
+  const w = state.w, h = state.h, depth = state.targetW;
   const live = state.mode === "play" || state.mode === "toss";
   const g0 = live && inTargetZone(0, state.ball.x);
   const g1 = live && inTargetZone(1, state.ball.x);
@@ -445,7 +401,7 @@ function drawNet() {
   ctx.moveTo(state.w * 0.5, 0);
   ctx.lineTo(state.w * 0.5, state.h);
   ctx.stroke();
-  ctx.globalAlpha = 0.2; 
+  ctx.globalAlpha = 0.2;
   ctx.moveTo(0, state.h*0.5);
   ctx.lineTo(state.w, state.h*0.5);
   ctx.stroke();
@@ -495,7 +451,7 @@ function drawScores() {
   ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
   ctx.fillText(POINT_SCORE_FORMAT[scores[0].p], woffset, hoffset);
 
-  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";  
+  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
   ctx.fillText(POINT_SCORE_FORMAT[scores[1].p], w - woffset, hoffset);
 
   const boxH = 10;
@@ -524,7 +480,7 @@ function drawScores() {
   ctx.restore();
 }
 
-function drawWaves() {	
+function drawWaves() {
   ctx.save();
   ctx.lineCap = "round";
   for (const w of state.waves) {
@@ -540,16 +496,51 @@ function drawWaves() {
   ctx.restore();
 }
 
-function drawBall() {
-  if (state.mode === "serve") return;
-  const b = state.ball;
-  const s = BALL_BASE + Math.pow( state.ball.z, 2.2);
+function drawKillMarks() {
+  const marks = state.marks;
+  if (!marks || !marks.length) return;
+  const arm = KILL_X_ARM;
   ctx.save();
-  ctx.translate(b.x, b.y);
-  ctx.rotate(b.r);
+  ctx.strokeStyle = "rgba(238,238,51," + KILL_X_ALPHA + ")";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "square";
+  for (let i = 0; i < marks.length; i++) {
+    const m = marks[i];
+    ctx.beginPath();
+    ctx.moveTo(m.x - arm, m.y - arm);
+    ctx.lineTo(m.x + arm, m.y + arm);
+    ctx.moveTo(m.x + arm, m.y - arm);
+    ctx.lineTo(m.x - arm, m.y + arm);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBallStamp(x, y, z, r, alpha) {
+  const s = ballDrawSize(z);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(r);
   ctx.fillStyle = BALL;
   ctx.fillRect(-s * 0.5, -s * 0.5, s, s);
   ctx.restore();
+}
+
+function drawBall() {
+  if (state.mode === "serve") return;
+  const b = state.ball;
+  const fade = state.mode === "pause" ? state.deadFade : 1;
+  if (fade <= 0) return;
+  const trail = b.trail;
+  if (trail && trail.length) {
+    const n = trail.length;
+    for (let i = 0; i < n; i++) {
+      const a = (0.18 + 0.17 * (i / Math.max(1, n - 1))) * fade;
+      drawBallStamp(trail[i].x, trail[i].y, trail[i].z, b.r, a);
+    }
+  }
+  drawBallStamp(b.x, b.y, b.z, b.r, fade);
 }
 
 function drawMessage() {
@@ -574,17 +565,18 @@ function draw() {
   drawNet();
   drawScores();
   drawChevron();
+  drawKillMarks();
   drawWaves();
   drawBall();
-  
-  if( resetHoldStart>0 ){    
-    const elapse = state.now-resetHoldStart;    
-    
+
+  if( resetHoldStart>0 ){
+    const elapse = state.now-resetHoldStart;
+
     if( elapse < RESET_HOLD_DELAY ){  return; }
-    
-    messageText = "RESET GAME?";    
+
+    messageText = "RESET GAME?";
     const t = (elapse-RESET_HOLD_DELAY) / (RESET_HOLD_MS-RESET_HOLD_DELAY);
-    
+
     ctx.save();
     ctx.strokeStyle = NEON;
     ctx.lineWidth = 10;
@@ -596,7 +588,7 @@ function draw() {
     ctx.stroke();
     ctx.restore();
   }
-  
+
   drawMessage();
 }
 
@@ -608,7 +600,7 @@ function frame(now) {
   if (!state.last) state.last = now;
   const elapsed = now - state.last;
   if (elapsed < FRAME_MS) return;
-  
+
   state.now = now;
   state.last = now - (elapsed % FRAME_MS);
   let dt = elapsed / 1000;
@@ -627,5 +619,3 @@ setTimeout( ()=> {
   state.mode="title";
   requestAnimationFrame(frame);
 }, 100 );
-
-
