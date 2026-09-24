@@ -22,17 +22,24 @@ const TRAIL_DT = 0.05;
 const TRAIL_MAX = 3;
 
 let ballScale = 1;
+let ballUser = 1;
+let racketUser = 1;
 
 function ballSetScale(s) {
   ballScale = s > 0.05 ? s : 0.05;
 }
 
+function ballSetUserScale(ballAdj, racketAdj) {
+  if (ballAdj > 0) ballUser = ballAdj;
+  if (racketAdj > 0) racketUser = racketAdj;
+}
+
 function ballSize() {
-  return BALL_BASE * ballScale;
+  return BALL_BASE * ballScale * ballUser;
 }
 
 function ballHitRadius() {
-  return HIT_RADIUS_MUL * BALL_BASE * ballScale;
+  return HIT_RADIUS_MUL * BALL_BASE * ballScale * racketUser;
 }
 
 function ballVolleyMin() {
@@ -108,7 +115,7 @@ function ballServeBoost(z) {
 }
 
 function ballDrawSize(z) {
-  return ballScale * (BALL_BASE + Math.pow(z, 2.2));
+  return ballScale * ballUser * (BALL_BASE + Math.pow(z, 2.2));
 }
 
 function ballTapPower(b, tapX, tapY) {

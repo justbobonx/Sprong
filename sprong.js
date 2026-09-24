@@ -8,8 +8,8 @@ const WAVE_SPEED = 800;
 const TOSS_MS = 1400;
 const POINT_PAUSE_MS = 900;
 const DEAD_FADE_MS = 520;
-const KILL_X_ALPHA = 0.92;
 const KILL_X_ARM = 9;
+const KILL_X_PULL = 0.3;
 const TARGET_W_PERC = 0.25;
 const GAMES_PER_SET = 3;
 const NEON = "#39ff14";
@@ -18,12 +18,19 @@ const BG_COL = "#020805";
 const PCOL = ["#2f9bff", "#ff3b3b"];
 const PCOL_RGB = ["47,155,255", "255,59,59"];
 
+const CAL_ADJ_MIN = 0.5;
+const CAL_ADJ_MAX = 1.5;
+const CAL_STEPS = 5;
+const CAL_LS_KEY = "sprong-cal";
+
 const RESET_HOLD_MS = 2000;
 let resetHoldTimer = 0;
 let resetHoldStart = 0;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
+
+const APP_VERSION = ((document.getElementById("sprong-version") || {}).textContent || "").trim();
 
 var messageText = "";
 
@@ -51,6 +58,9 @@ var state = {
   deadFade: 1,
   last: 0,
 };
+
+var calPick = { ball: 1, racket: 1 };
+var calBtn = { x0: 0, y0: 0, x1: 0, y1: 0 };
 
 function saveState() {
   try {
@@ -82,6 +92,39 @@ function loadState() {
   }
 }
 
+function calStepValue(i) {
+  if (CAL_STEPS <= 1) return CAL_ADJ_MIN;
+  return CAL_ADJ_MIN + (CAL_ADJ_MAX - CAL_ADJ_MIN) * i / (CAL_STEPS - 1);
+}
+
+function loadCal() {
+  try {
+    const raw = localStorage.getItem(CAL_LS_KEY);
+    if (raw == null) return false;
+    const c = JSON.parse(raw);
+    if (typeof c.ball !== "number" || typeof c.racket !== "number") return false;
+    if (!(c.ball > 0) || !(c.racket > 0)) return false;
+    calPick.ball = c.ball;
+    calPick.racket = c.racket;
+    ballSetUserScale(calPick.ball, calPick.racket);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function saveCal() {
+  try {
+    localStorage.setItem(CAL_LS_KEY, JSON.stringify({
+      ball: calPick.ball,
+      racket: calPick.racket
+    }));
+  } catch (e) {
+    console.error('saveCal failed', e);
+  }
+  ballSetUserScale(calPick.ball, calPick.racket);
+}
+
 function requestPageFullscreen() {
   const el = document.documentElement;
   const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
@@ -93,13 +136,30 @@ function requestPageFullscreen() {
   return Promise.resolve();
 }
 
-function startGame() {
-  if (state.mode !== "title") return;
+function beginPlay() {
   loadState();
   resize();
+  ballSetUserScale(calPick.ball, calPick.racket);
   const startServer = state.scoredBy >=0 ? state.scoredBy : Math.round(Math.random());
   newPoint(startServer);
+}
+
+function enterCal(which) {
+  state.mode = which === "racket" ? "cal-racket" : "cal-ball";
+}
+
+function leaveTitle(forceCal) {
   requestPageFullscreen();
+  if (forceCal || !loadCal()) {
+    enterCal("ball");
+    return;
+  }
+  beginPlay();
+}
+
+function startGame() {
+  if (state.mode !== "title") return;
+  leaveTitle(false);
 }
 
 function resize() {
@@ -123,6 +183,7 @@ function resize() {
   const prevScale = state.scale || 0;
   state.scale = state.w / REF_W;
   ballSetScale(state.scale);
+  ballSetUserScale(calPick.ball, calPick.racket);
   if (oldW > 0 && oldH > 0 && (oldW !== state.w || oldH !== state.h) && state.marks) {
     const sx = state.w / oldW;
     const sy = state.h / oldH;
@@ -188,7 +249,16 @@ function scoreFor(winner) {
 
   const b = state.ball;
   pinBallToCourt(b);
-  state.marks.push({ x: b.x, y: b.y });
+  const arm = KILL_X_ARM * state.scale;
+  const pull = KILL_X_PULL * arm * 2;
+  const spd = Math.hypot(b.vx, b.vy);
+  let mx = b.x;
+  let my = b.y;
+  if (spd > 0 && pull > 0) {
+    mx -= (b.vx / spd) * pull;
+    my -= (b.vy / spd) * pull;
+  }
+  state.marks.push({ x: mx, y: my });
 
   state.mode = "pause";
   messageText = "POINT FOR "+(winner==state.server ? "SERVE" : "RECV");
@@ -273,11 +343,50 @@ function resetUp() {
   resetHoldStart = 0;
 }
 
+function inCalibrateButton(p) {
+  return p.x >= calBtn.x0 && p.x <= calBtn.x1 && p.y >= calBtn.y0 && p.y <= calBtn.y1;
+}
+
+function calSlotIndex(x) {
+  const pad = state.w * 0.06;
+  const usable = state.w - pad * 2;
+  if (x < pad || x > state.w - pad) {
+    if (x < pad) return 0;
+    return CAL_STEPS - 1;
+  }
+  let i = Math.floor((x - pad) / (usable / CAL_STEPS));
+  if (i < 0) i = 0;
+  if (i >= CAL_STEPS) i = CAL_STEPS - 1;
+  return i;
+}
+
+function onCalTap(x, y) {
+  if (y < state.h * 0.18 || y > state.h * 0.88) return;
+  const adj = calStepValue(calSlotIndex(x));
+  if (state.mode === "cal-ball") {
+    calPick.ball = adj;
+    ballSetUserScale(calPick.ball, calPick.racket);
+    enterCal("racket");
+    return;
+  }
+  calPick.racket = adj;
+  saveCal();
+  beginPlay();
+}
+
 function bindInput() {
   canvas.addEventListener("pointerdown", (ev) => {
-    if (state.mode === "title") return;
     const r = canvas.getBoundingClientRect();
     const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+    if (state.mode === "title") {
+      if (inCalibrateButton(p)) leaveTitle(true);
+      else leaveTitle(false);
+      return;
+    }
+    if (state.mode === "cal-ball" || state.mode === "cal-racket") {
+      onCalTap(p.x, p.y);
+      return;
+    }
     if( !inTargetZone(0,p.x) && !inTargetZone(1,p.x) ){
       resetDown();
     }
@@ -288,10 +397,6 @@ function bindInput() {
 
   canvas.addEventListener('click', (ev) => {
     ev.preventDefault();
-    if (state.mode === "title") {
-      startGame();
-      return;
-    }
   });
 
   canvas.addEventListener('pointercancel', () => resetUp());
@@ -327,7 +432,7 @@ function updatePlay(dt) {
 }
 
 function update(dt) {
-  if (state.mode === "title") return;
+  if (state.mode === "title" || state.mode === "cal-ball" || state.mode === "cal-racket") return;
   const ms = dt * 1000;
   if (state.mode === "toss") {
     state.tossT += ms;
@@ -366,6 +471,8 @@ function beginDraw() {
 
 function drawTitle() {
   const font = Math.min(state.w * 0.2, state.h * 0.6);
+  const small = font / 8;
+  const by = state.h * 0.92;
   ctx.save();
   ctx.fillStyle = NEON;
   ctx.font = "900 " + font + "px ui-sans-serif, system-ui, sans-serif";
@@ -373,8 +480,67 @@ function drawTitle() {
   ctx.textBaseline = "middle";
   ctx.fillText("SPRONG", state.w * 0.5, state.h * 0.5);
 
-  ctx.font = "300 " + font/8 + "px ui-sans-serif, system-ui, sans-serif";
-  ctx.fillText("version", state.w * 0.5, state.h * 0.95);
+  ctx.font = "300 " + small + "px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  const bx = state.w * 0.04;
+  ctx.fillText("calibrate", bx, by);
+  const tw = ctx.measureText("calibrate").width;
+  const pad = Math.max(14, small * 0.9);
+  calBtn.x0 = bx - pad;
+  calBtn.y0 = by - small - pad * 0.35;
+  calBtn.x1 = bx + tw + pad;
+  calBtn.y1 = by + small + pad * 0.35;
+
+  ctx.textAlign = "right";
+  ctx.fillText(APP_VERSION, state.w * 0.96, by);
+  ctx.restore();
+}
+
+function drawCal() {
+  const racket = state.mode === "cal-racket";
+  const label = racket ? "RACKET SIZE" : "BALL SIZE";
+  const current = racket ? calPick.racket : calPick.ball;
+  const pad = state.w * 0.06;
+  const usable = state.w - pad * 2;
+  const slotW = usable / CAL_STEPS;
+  const cy = state.h * 0.52;
+  const titleFont = Math.max(18, Math.min(state.w, state.h) * 0.07);
+
+  ctx.save();
+  ctx.fillStyle = NEON;
+  ctx.font = "700 " + titleFont + "px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, state.w * 0.5, state.h * 0.16);
+
+  for (let i = 0; i < CAL_STEPS; i++) {
+    const adj = calStepValue(i);
+    const cx = pad + slotW * (i + 0.5);
+    const selected = Math.abs(adj - current) < 0.001;
+
+    if (racket) {
+      const r = HIT_RADIUS_MUL * BALL_BASE * state.scale * adj;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(4, r), 0, Math.PI * 2);
+      ctx.fillStyle = selected ? "rgba(12,90,18,0.92)" : "rgba(8,56,12,0.88)";
+      ctx.fill();
+      ctx.lineWidth = selected ? 4 : 2.5;
+      ctx.strokeStyle = NEON;
+      ctx.stroke();
+    } else {
+      const s = BALL_BASE * state.scale * adj;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.fillStyle = BALL;
+      if (selected) {
+        ctx.strokeStyle = NEON;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(-s * 0.5 - 4, -s * 0.5 - 4, s + 8, s + 8);
+      }
+      ctx.fillRect(-s * 0.5, -s * 0.5, s, s);
+      ctx.restore();
+    }
+  }
   ctx.restore();
 }
 
@@ -528,12 +694,15 @@ function drawKillMarks() {
   const marks = state.marks;
   if (!marks || !marks.length) return;
   const arm = KILL_X_ARM * state.scale;
+  const n = marks.length;
   ctx.save();
-  ctx.strokeStyle = "rgba(238,238,51," + KILL_X_ALPHA + ")";
   ctx.lineWidth = 3;
   ctx.lineCap = "square";
-  for (let i = 0; i < marks.length; i++) {
+  for (let i = 0; i < n; i++) {
     const m = marks[i];
+    const t = n <= 1 ? 1 : i / (n - 1);
+    const a = i === n - 1 ? 0.6 : 0.1 + 0.4 * t;
+    ctx.strokeStyle = "rgba(238,238,51," + a + ")";
     ctx.beginPath();
     ctx.moveTo(m.x - arm, m.y - arm);
     ctx.lineTo(m.x + arm, m.y + arm);
@@ -594,6 +763,10 @@ function draw() {
     drawTitle();
     return;
   }
+  if (state.mode === "cal-ball" || state.mode === "cal-racket") {
+    drawCal();
+    return;
+  }
   drawTargetZones();
   drawNet();
   drawScores();
@@ -645,6 +818,7 @@ function frame(now) {
 
 window.addEventListener("resize", resize);
 window.addEventListener("orientationchange", () => setTimeout(resize, 80));
+loadCal();
 resize();
 bindInput();
 
