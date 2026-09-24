@@ -11,8 +11,8 @@ const VOLLEY_STEP = 55;
 const SERVE_MUL_LO = 0.5;
 const SERVE_MUL_HI = 1.2;
 const TOSS_Z = 20;
-const ANGLE_SCALE = 0.35;
-const MAX_RETURN_ANG = 28 * Math.PI / 180;
+const ANGLE_SCALE = 0.5;
+const MAX_RETURN_ANG = 45 * Math.PI / 180;
 const BALL_G = 64;
 const VZ_MIN = 6;
 const VZ_MAX = 16;
@@ -131,6 +131,14 @@ function ballLaunch(b, tapX, tapY, fromSide, speed, power) {
   const depth = ballSize();
   const lateral = b.y - tapY;
   let ang = Math.atan2(lateral, depth) * ANGLE_SCALE;
+  
+  const near_side_adj = (b.y / state.h) * 2 - 1;   // -1 .. +1, 0 at mid
+  const OUT_DAMP = 0.45;               // 0 = off, 1 = no outbound angle on the rail
+
+  if (ang * near_side_adj > 0) {
+    ang *= 1 - OUT_DAMP * Math.abs(near_side_adj);
+  }
+
   if (ang > MAX_RETURN_ANG) ang = MAX_RETURN_ANG;
   if (ang < -MAX_RETURN_ANG) ang = -MAX_RETURN_ANG;
 

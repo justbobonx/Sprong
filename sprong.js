@@ -473,16 +473,21 @@ function beginDraw() {
 
 function drawTitle() {
   const font = Math.min(state.w * 0.2, state.h * 0.6);
-  const small = font / 8;
-  const by = state.h * 0.92;
+  const small = font / 8;  
   ctx.save();
   ctx.fillStyle = NEON;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = NEON;  
   ctx.font = "900 " + font + "px ui-sans-serif, system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.globalAlpha = .2;
   ctx.fillText("SPRONG", state.w * 0.5, state.h * 0.5);
+  ctx.globalAlpha = 1;
+  ctx.strokeText("SPRONG", state.w * 0.5, state.h * 0.5);
 
-  ctx.font = "300 " + small + "px ui-sans-serif, system-ui, sans-serif";
+  const by = state.h * 0.96;
+  ctx.font = "400 " + small + "px ui-sans-serif, system-ui, sans-serif";
   ctx.textAlign = "left";
   const bx = state.w * 0.04;
   ctx.fillText("calibrate", bx, by);
@@ -755,7 +760,7 @@ function drawMessage() {
   ctx.textBaseline = "middle";
   ctx.strokeStyle = "#000000";
   ctx.fillStyle = "#000000";
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 5;
   ctx.strokeText(messageText, state.w * 0.5, state.h * 0.75);
   ctx.fillText(messageText, state.w * 0.5, state.h * 0.75);
   ctx.fillStyle = "rgba(57,255,20,0.35)";
@@ -773,10 +778,10 @@ function draw() {
   if (state.mode === "cal-ball" || state.mode === "cal-racket") {
     drawCal();
     return;
-  }
-  drawKillMarks();
+  }  
   drawNet();
-  drawTargetZones();  
+  drawTargetZones();
+  drawKillMarks();
   drawChevron();
   drawScores();
   drawWaves();
