@@ -8,15 +8,17 @@ const WAVE_SPEED = 800;
 const TOSS_MS = 1400;
 const POINT_PAUSE_MS = 900;
 const DEAD_FADE_MS = 520;
-const KILL_X_ARM = 9;
+const KILL_X_ARM = 9 * 0.8;
 const KILL_X_PULL = 0.3;
 const TARGET_W_PERC = 0.25;
 const GAMES_PER_SET = 3;
 const NEON = "#39ff14";
 const BALL = "#eeee33";
 const BG_COL = "#020805";
-const PCOL = ["#2f9bff", "#ff3b3b"];
-const PCOL_RGB = ["47,155,255", "255,59,59"];
+const PCOL = ["#ff9900", "#0099ff"];
+const PCOL_RGB = ["255,153,0", "0,153,255"];
+const MARK_FOR = "#ff3b3b";
+const MARK_AGAINST = "#888888";
 
 const CAL_ADJ_MIN = 0.5;
 const CAL_ADJ_MAX = 1.5;
@@ -258,7 +260,7 @@ function scoreFor(winner) {
     mx -= (b.vx / spd) * pull;
     my -= (b.vy / spd) * pull;
   }
-  state.marks.push({ x: mx, y: my });
+  state.marks.push({ x: mx, y: my, for: winner === state.server });
 
   state.mode = "pause";
   messageText = "POINT FOR "+(winner==state.server ? "SERVE" : "RECV");
@@ -546,23 +548,22 @@ function drawCal() {
 
 function drawTargetZones() {
   const w = state.w, h = state.h, depth = state.targetW;
-  const live = state.mode === "play" || state.mode === "toss";
-  const g0 = live && inTargetZone(0, state.ball.x);
-  const g1 = live && inTargetZone(1, state.ball.x);
   ctx.save();
-  ctx.fillStyle = "rgba(" + PCOL_RGB[0] + "," + (g0 ? "0.20" : "0.10") + ")";
-  ctx.fillRect(0, 0, depth, h);
-  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + "," + (g1 ? "0.20" : "0.10") + ")";
-  ctx.fillRect(w - depth, 0, depth, h);
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 8]);
-  ctx.strokeStyle = "rgba(" + PCOL_RGB[0] + ",0.45)";
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "#000000";
+  ctx.globalAlpha = 1;
   ctx.beginPath();
   ctx.moveTo(depth, 0);
   ctx.lineTo(depth, h);
+  ctx.moveTo(w - depth, 0);
+  ctx.lineTo(w - depth, h);
   ctx.stroke();
-  ctx.strokeStyle = "rgba(" + PCOL_RGB[1] + ",0.45)";
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = NEON;
+  ctx.globalAlpha = 0.6;
   ctx.beginPath();
+  ctx.moveTo(depth, 0);
+  ctx.lineTo(depth, h);
   ctx.moveTo(w - depth, 0);
   ctx.lineTo(w - depth, h);
   ctx.stroke();
@@ -574,10 +575,11 @@ function drawNet() {
   ctx.lineWidth = 3;
   ctx.strokeStyle = NEON;  
   ctx.globalAlpha = 0.2;
+  ctx.beginPath();
   ctx.moveTo(0, state.h*0.5);
   ctx.lineTo(state.w, state.h*0.5);
   ctx.stroke();
-  ctx.lineWidth = 6;
+  ctx.lineWidth = 8;
   ctx.globalAlpha = 1;
   ctx.strokeStyle = "#000000";  
   ctx.beginPath();
@@ -645,7 +647,7 @@ function drawScores() {
   ctx.fillStyle = "rgba(" + PCOL_RGB[0] + ",0.55)";
   ctx.fillText(POINT_SCORE_FORMAT[scores[0].p], woffset, hoffset);
 
-  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";
+  ctx.fillStyle = "rgba(" + PCOL_RGB[1] + ",0.55)";  
   ctx.fillText(POINT_SCORE_FORMAT[scores[1].p], w - woffset, hoffset);
 
   const boxH = 10;
@@ -693,22 +695,27 @@ function drawWaves() {
 function drawKillMarks() {
   const marks = state.marks;
   if (!marks || !marks.length) return;
-  const arm = KILL_X_ARM * state.scale;
+  const outer = KILL_X_ARM * state.scale;
+  const inner = outer * 0.42;
   const n = marks.length;
   ctx.save();
-  ctx.lineWidth = 3;
-  ctx.lineCap = "square";
   for (let i = 0; i < n; i++) {
     const m = marks[i];
     const t = n <= 1 ? 1 : i / (n - 1);
-    const a = i === n - 1 ? 0.6 : 0.1 + 0.4 * t;
-    ctx.strokeStyle = "rgba(238,238,51," + a + ")";
+    const a = i === n - 1 ? 0.6 : 0.2 + 0.5 * t;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = m.for ? MARK_FOR : MARK_AGAINST;
     ctx.beginPath();
-    ctx.moveTo(m.x - arm, m.y - arm);
-    ctx.lineTo(m.x + arm, m.y + arm);
-    ctx.moveTo(m.x + arm, m.y - arm);
-    ctx.lineTo(m.x - arm, m.y + arm);
-    ctx.stroke();
+    for (let k = 0; k < 12; k++) {
+      const ang = -Math.PI / 2 + k * Math.PI / 6;
+      const rad = (k & 1) ? inner : outer;
+      const x = m.x + Math.cos(ang) * rad;
+      const y = m.y + Math.sin(ang) * rad;
+      if (k === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -767,11 +774,11 @@ function draw() {
     drawCal();
     return;
   }
-  drawTargetZones();
-  drawNet();
-  drawScores();
-  drawChevron();
   drawKillMarks();
+  drawNet();
+  drawTargetZones();  
+  drawChevron();
+  drawScores();
   drawWaves();
   drawBall();
 
