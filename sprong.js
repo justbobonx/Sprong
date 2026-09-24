@@ -2,12 +2,13 @@
   sprong is tennis pong ?
   NO.  It is SPRONG!
  */
+const REF_W = 800;
 const MAX_RADIUS = 200;
 const WAVE_SPEED = 800;
 const TOSS_MS = 1400;
 const POINT_PAUSE_MS = 900;
 const DEAD_FADE_MS = 520;
-const KILL_X_ALPHA = 0.3;
+const KILL_X_ALPHA = 0.92;
 const KILL_X_ARM = 9;
 const TARGET_W_PERC = 0.25;
 const GAMES_PER_SET = 3;
@@ -45,6 +46,7 @@ var state = {
   scoredBy: -1,
   lastHitter: -1,
   rallyMax: VOLLEY_MAX_START,
+  scale: 1,
   marks: [],
   deadFade: 1,
   last: 0,
@@ -73,6 +75,7 @@ function loadState() {
     if (loaded.rallyMax == null) loaded.rallyMax = VOLLEY_MAX_START;
     if (!loaded.marks) loaded.marks = [];
     if (loaded.deadFade == null) loaded.deadFade = 1;
+    if (loaded.scale == null) loaded.scale = 1;
     state = loaded;
   } catch (e) {
     console.error('loadState failed', e);
@@ -93,6 +96,7 @@ function requestPageFullscreen() {
 function startGame() {
   if (state.mode !== "title") return;
   loadState();
+  resize();
   const startServer = state.scoredBy >=0 ? state.scoredBy : Math.round(Math.random());
   newPoint(startServer);
   requestPageFullscreen();
@@ -116,6 +120,9 @@ function resize() {
   state.w = Math.max(viewW, viewH);
   state.h = Math.min(viewW, viewH);
   state.targetW = state.w * 0.5 * TARGET_W_PERC;
+  const prevScale = state.scale || 0;
+  state.scale = state.w / REF_W;
+  ballSetScale(state.scale);
   if (oldW > 0 && oldH > 0 && (oldW !== state.w || oldH !== state.h) && state.marks) {
     const sx = state.w / oldW;
     const sy = state.h / oldH;
@@ -124,8 +131,9 @@ function resize() {
       state.marks[i].y *= sy;
     }
   }
+  const scaleJump = prevScale > 0 && Math.abs(state.scale - prevScale) / prevScale > 0.08;
   if (state.mode === "serve") ballPark(state.ball);
-  else if (wasPortrait !== state.portrait) newPoint(state.server);
+  else if (wasPortrait !== state.portrait || (scaleJump && state.mode === "play")) newPoint(state.server);
 }
 
 function screenToWorld(sx, sy) {
@@ -150,7 +158,7 @@ function newPoint(server) {
   state.pauseT = 0;
   state.scoredBy = -1;
   state.lastHitter = -1;
-  state.rallyMax = VOLLEY_MAX_START;
+  state.rallyMax = ballVolleyStart();
   state.deadFade = 1;
   ballPark(state.ball);
 }
@@ -183,7 +191,7 @@ function scoreFor(winner) {
   state.marks.push({ x: b.x, y: b.y });
 
   state.mode = "pause";
-  messageText = "POINT FOR "+(winner==state.server ? "SERVE" : "RECEIVE");
+  messageText = "POINT FOR "+(winner==state.server ? "SERVE" : "RECV");
   setTimeout( ()=>{ messageText="" }, POINT_PAUSE_MS );
   state.pauseT = 0;
   state.scoredBy = winner;
@@ -209,11 +217,13 @@ function tryStrike(tapX, tapY, side, isServe) {
   let speed;
   if (isServe) {
     const boost = ballServeBoost(b.z);
-    speed = SERVE_MIN + (SERVE_MAX - SERVE_MIN) * boost;
+    speed = ballServeMin() + (ballServeMax() - ballServeMin()) * boost;
   } else {
-    speed = VOLLEY_MIN + power * (state.rallyMax - VOLLEY_MIN);
-    state.rallyMax += VOLLEY_STEP;
-    if (state.rallyMax > BALL_MAX_SPEED) state.rallyMax = BALL_MAX_SPEED;
+    const vmin = ballVolleyMin();
+    speed = vmin + power * (state.rallyMax - vmin);
+    state.rallyMax += ballVolleyStep();
+    const cap = ballMaxSpeed();
+    if (state.rallyMax > cap) state.rallyMax = cap;
   }
 
   ballLaunch(b, tapX, tapY, side, speed, power);
@@ -301,15 +311,15 @@ function updateWaves(dt) {
     const w = state.waves[i];
     w.prev = w.r;
     if (w.born) w.born = false;
-    else w.r += WAVE_SPEED * dt;
-    if (w.r >= MAX_RADIUS) state.waves.splice(i, 1);
+    else w.r += WAVE_SPEED * state.scale * dt;
+    if (w.r >= MAX_RADIUS * state.scale) state.waves.splice(i, 1);
   }
 }
 
 function updatePlay(dt) {
   const b = state.ball;
   ballStep(b, dt);
-  const half = BALL_BASE * 0.5;
+  const half = ballSize() * 0.5;
   const missSide = state.lastHitter < 0 ? state.server : state.lastHitter;
   if (b.x + half < 0) scoreFor(1);
   else if (b.x - half > state.w) scoreFor(0);
@@ -395,15 +405,24 @@ function drawTargetZones() {
 
 function drawNet() {
   ctx.save();
-  ctx.strokeStyle = NEON;
   ctx.lineWidth = 3;
+  ctx.strokeStyle = NEON;  
+  ctx.globalAlpha = 0.2;
+  ctx.moveTo(0, state.h*0.5);
+  ctx.lineTo(state.w, state.h*0.5);
+  ctx.stroke();
+  ctx.lineWidth = 6;
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#000000";  
   ctx.beginPath();
   ctx.moveTo(state.w * 0.5, 0);
   ctx.lineTo(state.w * 0.5, state.h);
   ctx.stroke();
-  ctx.globalAlpha = 0.2;
-  ctx.moveTo(0, state.h*0.5);
-  ctx.lineTo(state.w, state.h*0.5);
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = NEON;
+  ctx.beginPath();
+  ctx.moveTo(state.w * 0.5, 0);
+  ctx.lineTo(state.w * 0.5, state.h);
   ctx.stroke();
   ctx.restore();
 }
@@ -411,7 +430,7 @@ function drawNet() {
 function drawChevron() {
   if (state.mode !== "serve") return;
   const w = state.w, h = state.h;
-  const s = Math.min(w, h);
+  const s = Math.min(w, h)*.5;
   const arm = s * 0.11;
   const thick = Math.max(8, s * 0.018);
   const cx = state.server === 0 ? w * 0.18 : w * 0.82;
@@ -420,15 +439,24 @@ function drawChevron() {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(ang);
-  ctx.strokeStyle = NEON;
-  ctx.lineWidth = thick;
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
+  ctx.lineWidth = thick+2;
+  ctx.strokeStyle = "#000000";
   ctx.beginPath();
   ctx.moveTo(-arm * 0.15, -arm * 0.85);
   ctx.lineTo(arm * 1.05, 0);
   ctx.lineTo(-arm * 0.15, arm * 0.85);
   ctx.stroke();
+  ctx.lineWidth = thick;
+  ctx.strokeStyle = NEON;
+  ctx.globalAlpha = 0.4;
+  ctx.beginPath();
+  ctx.moveTo(-arm * 0.15, -arm * 0.85);
+  ctx.lineTo(arm * 1.05, 0);
+  ctx.lineTo(-arm * 0.15, arm * 0.85);
+  ctx.stroke();
+  
   ctx.restore();
 }
 
@@ -484,7 +512,7 @@ function drawWaves() {
   ctx.save();
   ctx.lineCap = "round";
   for (const w of state.waves) {
-    const t = Math.max(0, Math.min(1, w.r / MAX_RADIUS));
+    const t = Math.max(0, Math.min(1, w.r / (MAX_RADIUS * state.scale)));
     const a = (1 - t) * (1 - t);
     if (a < 0.02) continue;
     ctx.strokeStyle = "rgba(" + PCOL_RGB[w.side] + "," + (0.95 * a).toFixed(3) + ")";
@@ -499,7 +527,7 @@ function drawWaves() {
 function drawKillMarks() {
   const marks = state.marks;
   if (!marks || !marks.length) return;
-  const arm = KILL_X_ARM;
+  const arm = KILL_X_ARM * state.scale;
   ctx.save();
   ctx.strokeStyle = "rgba(238,238,51," + KILL_X_ALPHA + ")";
   ctx.lineWidth = 3;
@@ -545,11 +573,16 @@ function drawBall() {
 
 function drawMessage() {
   if (messageText === "") return;
-  ctx.save();
-  ctx.fillStyle = "rgba(57,255,20,0.35)";
+  ctx.save();  
   ctx.font = "600 " + Math.max(20, Math.min(state.w, state.h) * 0.1) + "px ui-sans-serif, system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.strokeStyle = "#000000";
+  ctx.fillStyle = "#000000";
+  ctx.lineWidth = 4;
+  ctx.strokeText(messageText, state.w * 0.5, state.h * 0.75);
+  ctx.fillText(messageText, state.w * 0.5, state.h * 0.75);
+  ctx.fillStyle = "rgba(57,255,20,0.35)";
   ctx.fillText(messageText, state.w * 0.5, state.h * 0.75);
   ctx.restore();
 }
