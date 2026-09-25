@@ -379,12 +379,7 @@ function onCalTap(x, y) {
 function bindInput() {
   canvas.addEventListener("pointerdown", (ev) => {
     const r = canvas.getBoundingClientRect();
-    const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
-    if (state.mode === "title") {
-      if (inCalibrateButton(p)) leaveTitle(true);
-      else leaveTitle(false);
-      return;
-    }
+    const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);    
     if (state.mode === "cal-ball" || state.mode === "cal-racket") {
       onCalTap(p.x, p.y);
       return;
@@ -398,7 +393,14 @@ function bindInput() {
   canvas.addEventListener('pointerup', () => resetUp());
 
   canvas.addEventListener('click', (ev) => {
+    const r = canvas.getBoundingClientRect();
+    const p = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
     ev.preventDefault();
+    if (state.mode === "title") {
+      if (inCalibrateButton(p)) leaveTitle(true);
+      else leaveTitle(false);
+      return;
+    }
   });
 
   canvas.addEventListener('pointercancel', () => resetUp());
